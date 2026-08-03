@@ -54,6 +54,14 @@ function App() {
     });
   };
 
+  const adjustCurrentPeriodTime = (delta) => {
+    setPeriodTimes((prev) => {
+      const next = [...prev];
+      next[currentPeriod] = Math.max(0, next[currentPeriod] + delta);
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 flex flex-col items-center justify-center">
       <h1 className="text-4xl font-bold mb-6">Wrestling Scoreboard</h1>
@@ -84,6 +92,10 @@ function App() {
         <div className="space-x-2 mb-3">
           <button onClick={handlePrevPeriod} className="bg-gray-700 px-5 py-2 rounded">Prev Period</button>
           <button onClick={handleNextPeriod} className="bg-gray-700 px-5 py-2 rounded">Next Period</button>
+        </div>
+        <div className="space-x-2 mb-3">
+          <button onClick={() => adjustCurrentPeriodTime(1)} className="bg-indigo-600 px-5 py-2 rounded">Increment Time</button>
+          <button onClick={() => adjustCurrentPeriodTime(-1)} className="bg-indigo-700 px-5 py-2 rounded">Decrement Time</button>
         </div>
         <div className="space-x-2">
           <button onClick={() => setIsRunning((prev) => !prev)} className="bg-blue-600 px-6 py-2 rounded">
