@@ -3,23 +3,55 @@ import { useState, useEffect } from "react";
 function App() {
   const [redScore, setRedScore] = useState(0);
   const [greenScore, setGreenScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(120); // in seconds
+  const [periodTimes, setPeriodTimes] = useState([120, 120, 120]);
+  const [currentPeriod, setCurrentPeriod] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
 
   useEffect(() => {
     let timer;
-    if (isRunning && timeLeft > 0) {
+
+    if (isRunning && periodTimes[currentPeriod] > 0) {
       timer = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
+        setPeriodTimes((prev) => {
+          const next = [...prev];
+          next[currentPeriod] = Math.max(0, next[currentPeriod] - 1);
+          return next;
+        });
       }, 1000);
     }
+
     return () => clearInterval(timer);
-  }, [isRunning, timeLeft]);
+  }, [isRunning, currentPeriod, periodTimes]);
+
+  useEffect(() => {
+    if (periodTimes[currentPeriod] === 0 && isRunning) {
+      setIsRunning(false);
+    }
+  }, [periodTimes, currentPeriod, isRunning]);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handlePrevPeriod = () => {
+    setIsRunning(false);
+    setCurrentPeriod((prev) => (prev - 1 + periodTimes.length) % periodTimes.length);
+  };
+
+  const handleNextPeriod = () => {
+    setIsRunning(false);
+    setCurrentPeriod((prev) => (prev + 1) % periodTimes.length);
+  };
+
+  const handleReset = () => {
+    setIsRunning(false);
+    setPeriodTimes((prev) => {
+      const next = [...prev];
+      next[currentPeriod] = 120;
+      return next;
+    });
   };
 
   return (
@@ -47,12 +79,17 @@ function App() {
       </div>
 
       <div className="text-center mb-6">
-        <div className="text-5xl font-mono mb-4">{formatTime(timeLeft)}</div>
+        <div className="text-lg mb-2">Period {currentPeriod + 1}/{periodTimes.length}</div>
+        <div className="text-5xl font-mono mb-4">{formatTime(periodTimes[currentPeriod])}</div>
+        <div className="space-x-2 mb-3">
+          <button onClick={handlePrevPeriod} className="bg-gray-700 px-5 py-2 rounded">Prev Period</button>
+          <button onClick={handleNextPeriod} className="bg-gray-700 px-5 py-2 rounded">Next Period</button>
+        </div>
         <div className="space-x-2">
-          <button onClick={() => setIsRunning(!isRunning)} className="bg-blue-600 px-6 py-2 rounded">
+          <button onClick={() => setIsRunning((prev) => !prev)} className="bg-blue-600 px-6 py-2 rounded">
             {isRunning ? "Pause" : "Start"}
           </button>
-          <button onClick={() => { setTimeLeft(120); setIsRunning(false); }} className="bg-yellow-600 px-6 py-2 rounded">
+          <button onClick={handleReset} className="bg-yellow-600 px-6 py-2 rounded">
             Reset
           </button>
         </div>
