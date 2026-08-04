@@ -30,4 +30,10 @@ export default [
       ],
     },
   },
+  {
+    files: ['tools/**/*.js', '*.config.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ]
