@@ -91,6 +91,8 @@ export function useDongleConnection(scoreboardState, dispatch) {
     await serviceRef.current.disconnect();
   }, []);
 
+  const sendRaw = useCallback((line) => serviceRef.current?.sendRaw(line) ?? false, []);
+
   return {
     isSupported,
     handshakeState,
@@ -105,5 +107,6 @@ export function useDongleConnection(scoreboardState, dispatch) {
     connect,
     reconnect,
     disconnect,
+    sendRaw,
   };
 }

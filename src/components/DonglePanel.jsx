@@ -1,3 +1,10 @@
+import { useState } from 'react';
+
+// The commands worth one click during an integration run (§7.1, §7.2). TEST 3
+// suspends link supervision, so TEST 0 is right next to it — leaving
+// supervision suspended makes the §5.1 checks pass for the wrong reason.
+const QUICK_COMMANDS = ['INFO', 'PING', 'TEST 1', 'TEST 2', 'TEST 0', 'TEST 3'];
+
 const HANDSHAKE_LABEL = {
   disconnected: 'Disconnected',
   handshaking: 'Connecting…',
@@ -35,9 +42,17 @@ function DonglePanel({ dongle }) {
     connect,
     reconnect,
     disconnect,
+    sendRaw,
   } = dongle;
 
+  const [command, setCommand] = useState('');
+
   const isConnected = handshakeState !== 'disconnected';
+
+  const submitCommand = (e) => {
+    e.preventDefault();
+    if (sendRaw(command)) setCommand('');
+  };
 
   if (!isSupported) {
     return (
@@ -89,6 +104,41 @@ function DonglePanel({ dongle }) {
           {debugEnabled ? 'Hide' : 'Show'} debug log
         </button>
       </div>
+
+      {debugEnabled && (
+        <div className="mt-2">
+          <form onSubmit={submitCommand} className="flex gap-2">
+            <input
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              disabled={!isConnected}
+              placeholder={isConnected ? 'Send a line, e.g. TEST 1' : 'Connect to send commands'}
+              spellCheck={false}
+              autoComplete="off"
+              className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 font-mono text-xs disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={!isConnected}
+              className="bg-blue-700 px-3 py-1 rounded text-xs disabled:opacity-50"
+            >
+              Send
+            </button>
+          </form>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {QUICK_COMMANDS.map((cmd) => (
+              <button
+                key={cmd}
+                onClick={() => sendRaw(cmd)}
+                disabled={!isConnected}
+                className="bg-gray-700 px-2 py-1 rounded font-mono text-xs disabled:opacity-50"
+              >
+                {cmd}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {debugEnabled && (
         <div className="mt-2 bg-black rounded p-2 h-48 overflow-y-auto font-mono text-xs">

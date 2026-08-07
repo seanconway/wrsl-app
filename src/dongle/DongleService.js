@@ -113,6 +113,23 @@ export class DongleService {
     }
   }
 
+  /**
+   * Sends a line exactly as given. The COM port is exclusive, so while the app
+   * holds it a serial terminal cannot — this is the only way to drive the
+   * firmware's TEST modes (§7.2) during an integration run, and it is the
+   * "raw-line panel" §7.3 asks for.
+   *
+   * Deliberately unvalidated: sending malformed lines is precisely how you
+   * exercise the firmware's §2.2 tolerance from the app side.
+   */
+  sendRaw(line) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return false;
+    if (this.handshakeState === 'disconnected') return false;
+    this._send(trimmed);
+    return true;
+  }
+
   _setHandshakeState(state) {
     this.handshakeState = state;
     this.onHandshakeStateChange(state);

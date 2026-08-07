@@ -38,13 +38,15 @@ const LINK_STATE_SET = new Set(LINK_STATES);
  */
 export function createLineAssembler() {
   let buffer = '';
+  // Persists across chunks: once an unterminated run crosses the length
+  // budget, drop everything until its terminator shows up so a garbage run
+  // can't be stitched onto whatever line follows it. That terminator may not
+  // arrive until a later read, so this cannot be scoped to a single push() —
+  // §2.2 resynchronises at the next \n, not at the next chunk boundary.
+  let discarding = false;
 
   function push(chunk) {
     const lines = [];
-    // Scoped to this call: once an unterminated run crosses the length
-    // budget, drop everything until its terminator shows up so a garbage
-    // run can't be stitched onto whatever line follows it.
-    let discarding = false;
 
     for (const ch of chunk) {
       if (discarding) {
@@ -77,6 +79,7 @@ export function createLineAssembler() {
 
   function reset() {
     buffer = '';
+    discarding = false;
   }
 
   return { push, reset };

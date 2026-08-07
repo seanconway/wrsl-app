@@ -76,17 +76,46 @@ describe('line assembler — §10 parser test cases', () => {
     expect(result).toEqual({ type: 'INVALID', keyword: 'EVT', reason: 'bad seq' });
   });
 
-  it('T9: an overlong buffer with no \\n is discarded, and the next line still parses', () => {
+  it('T9: an overlong buffer is discarded, and the first line after its terminator parses', () => {
     const a = createLineAssembler();
     const overlong = 'X'.repeat(200);
     expect(a.push(overlong)).toEqual([]);
-    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
+    // The junk run is still unterminated, so these bytes belong to it. §2.2
+    // resynchronises at the next \n, and a chunk boundary is not one — the
+    // split between reads carries no information about the stream. So this
+    // line's own terminator is what ends the garbage, and the line goes with
+    // it. Losing one line is the correct price of resynchronising on a
+    // known-good boundary; the alternative is emitting garbage as a message.
+    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual([]);
+    expect(a.push('EVT ADD_POINT RED 18\n')).toEqual(['EVT ADD_POINT RED 18']);
   });
 
   it('T9b: an overlong line that arrives with its own terminator in the same read() also resyncs correctly', () => {
     const a = createLineAssembler();
     const overlong = 'X'.repeat(200) + '\n';
     expect(a.push(overlong + 'EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
+  });
+
+  it('T9c: an overlong run whose terminator lands in a later read() discards its tail too', () => {
+    // §2.2 resynchronises at the next \n, which may be several reads away —
+    // so the discard state has to survive a chunk boundary. If it does not,
+    // the tail of the garbage run is emitted as a line of its own, and a tail
+    // that happened to begin at a keyword boundary would parse as a real
+    // message.
+    const a = createLineAssembler();
+    const overlong = 'X'.repeat(200);
+    expect(a.push(overlong.slice(0, 100))).toEqual([]);
+    expect(a.push(overlong.slice(100))).toEqual([]);
+    expect(a.push('TAIL\nEVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
+  });
+
+  it('T9d: a discarded run does not survive an explicit reset()', () => {
+    const a = createLineAssembler();
+    expect(a.push('X'.repeat(200))).toEqual([]);
+    a.reset();
+    // Without clearing the discard flag, reset() would leave the assembler
+    // swallowing everything up to the next \n on a freshly reopened port.
+    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
   });
 
   it('T10: empty lines are ignored and the event is parsed', () => {

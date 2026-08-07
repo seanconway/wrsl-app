@@ -258,6 +258,43 @@ describe('link supervision (§5.1)', () => {
   });
 });
 
+describe('raw command sending (§7.2, §7.3)', () => {
+  it('sends a line verbatim once connected, and records it in the debug log', async () => {
+    const h = createHarness();
+    await handshake(h);
+    h.transport.outbox.length = 0;
+
+    expect(h.service.sendRaw('TEST 1')).toBe(true);
+    expect(h.transport.outbox).toEqual(['TEST 1']);
+    expect(h.service.debugLog.at(-1)).toMatchObject({ dir: 'TX', line: 'TEST 1' });
+  });
+
+  it('trims surrounding whitespace and ignores an empty command', async () => {
+    const h = createHarness();
+    await handshake(h);
+    h.transport.outbox.length = 0;
+
+    expect(h.service.sendRaw('  TEST 0  ')).toBe(true);
+    expect(h.service.sendRaw('   ')).toBe(false);
+    expect(h.transport.outbox).toEqual(['TEST 0']);
+  });
+
+  it('refuses to send while disconnected rather than throwing at the transport', () => {
+    const h = createHarness();
+    expect(h.service.sendRaw('TEST 1')).toBe(false);
+    expect(h.transport.outbox).toEqual([]);
+  });
+
+  it('passes malformed lines through unaltered — that is how the firmware §2.2 path gets exercised', async () => {
+    const h = createHarness();
+    await handshake(h);
+    h.transport.outbox.length = 0;
+
+    h.service.sendRaw('BOGUS FOO BAR');
+    expect(h.transport.outbox).toEqual(['BOGUS FOO BAR']);
+  });
+});
+
 describe('malformed input (§2.2)', () => {
   it('16. malformed lines are ignored without crashing, and a valid line right after is still processed', async () => {
     const h = createHarness();
