@@ -2,249 +2,247 @@ import { describe, it, expect } from 'vitest';
 import {
   createLineAssembler,
   parseLine,
-  encodeInfo,
-  encodePing,
-  encodeEcho,
-  encodeClockRun,
-  encodeClockStop,
-  encodeExpire,
-  encodeConfirm,
-  encodeTest,
+  encodeAck,
+  encodeState,
+  encodeHap,
+  encodeCfg,
   encodeHello,
   encodeEvt,
   encodeLink,
-  encodePong,
-  encodeLog,
-  encodeErr,
+  encodeJoin,
+  encodeTest,
+  normaliseRgb,
   nextSeq,
+  seqDistance,
+  SEQ_MODULUS,
+  BUTTONS,
+  GESTURES,
+  WAVEFORMS,
 } from './protocol.js';
 
 // ---------------------------------------------------------------------------
-// Suite 1: line assembler — PROTOCOL.md §10 (T1-T10)
+// PROTOCOL.md §14 — the parser test cases, in order.
 // ---------------------------------------------------------------------------
 
-describe('line assembler — §10 parser test cases', () => {
-  it('T1: a single terminated line is parsed', () => {
+function pushAll(assembler, chunks) {
+  return chunks.flatMap((chunk) => assembler.push(chunk));
+}
+
+describe('PROTOCOL.md §14 parser cases', () => {
+  it('T1 parses a complete line', () => {
     const a = createLineAssembler();
-    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T2: trailing \\r is stripped', () => {
-    const a = createLineAssembler();
-    expect(a.push('EVT ADD_POINT RED 17\r\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T3: delivered one byte per read() is parsed identically', () => {
-    const a = createLineAssembler();
-    const input = 'EVT ADD_POINT RED 17\n';
-    let lines = [];
-    for (const ch of input) {
-      lines = lines.concat(a.push(ch));
-    }
-    expect(lines).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T4: three lines in a single read() are all parsed, in order', () => {
-    const a = createLineAssembler();
-    const lines = a.push('EVT ADD_POINT RED 17\nEVT ADD_POINT GREEN 18\nPING\n');
-    expect(lines).toEqual(['EVT ADD_POINT RED 17', 'EVT ADD_POINT GREEN 18', 'PING']);
-  });
-
-  it('T5: a line split mid-token across two reads is parsed', () => {
-    const a = createLineAssembler();
-    expect(a.push('EVT ADD_POI')).toEqual([]);
-    expect(a.push('NT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T6: an unknown keyword is ignored without crashing', () => {
-    const a = createLineAssembler();
-    const [line] = a.push('BOGUS FOO BAR\n');
-    expect(parseLine(line)).toBeNull();
-  });
-
-  it('T7: missing args are ignored and logged (INVALID)', () => {
-    const a = createLineAssembler();
-    const [line] = a.push('EVT ADD_POINT\n');
-    const result = parseLine(line);
-    expect(result).toEqual({ type: 'INVALID', keyword: 'EVT', reason: 'wrong arg count' });
-  });
-
-  it('T8: a bad seq is ignored and logged (INVALID)', () => {
-    const a = createLineAssembler();
-    const [line] = a.push('EVT ADD_POINT RED xyz\n');
-    const result = parseLine(line);
-    expect(result).toEqual({ type: 'INVALID', keyword: 'EVT', reason: 'bad seq' });
-  });
-
-  it('T9: an overlong buffer is discarded, and the first line after its terminator parses', () => {
-    const a = createLineAssembler();
-    const overlong = 'X'.repeat(200);
-    expect(a.push(overlong)).toEqual([]);
-    // The junk run is still unterminated, so these bytes belong to it. §2.2
-    // resynchronises at the next \n, and a chunk boundary is not one — the
-    // split between reads carries no information about the stream. So this
-    // line's own terminator is what ends the garbage, and the line goes with
-    // it. Losing one line is the correct price of resynchronising on a
-    // known-good boundary; the alternative is emitting garbage as a message.
-    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual([]);
-    expect(a.push('EVT ADD_POINT RED 18\n')).toEqual(['EVT ADD_POINT RED 18']);
-  });
-
-  it('T9b: an overlong line that arrives with its own terminator in the same read() also resyncs correctly', () => {
-    const a = createLineAssembler();
-    const overlong = 'X'.repeat(200) + '\n';
-    expect(a.push(overlong + 'EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T9c: an overlong run whose terminator lands in a later read() discards its tail too', () => {
-    // §2.2 resynchronises at the next \n, which may be several reads away —
-    // so the discard state has to survive a chunk boundary. If it does not,
-    // the tail of the garbage run is emitted as a line of its own, and a tail
-    // that happened to begin at a keyword boundary would parse as a real
-    // message.
-    const a = createLineAssembler();
-    const overlong = 'X'.repeat(200);
-    expect(a.push(overlong.slice(0, 100))).toEqual([]);
-    expect(a.push(overlong.slice(100))).toEqual([]);
-    expect(a.push('TAIL\nEVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T9d: a discarded run does not survive an explicit reset()', () => {
-    const a = createLineAssembler();
-    expect(a.push('X'.repeat(200))).toEqual([]);
-    a.reset();
-    // Without clearing the discard flag, reset() would leave the assembler
-    // swallowing everything up to the next \n on a freshly reopened port.
-    expect(a.push('EVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-
-  it('T10: empty lines are ignored and the event is parsed', () => {
-    const a = createLineAssembler();
-    expect(a.push('\n\n\nEVT ADD_POINT RED 17\n')).toEqual(['EVT ADD_POINT RED 17']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Round-trip encode -> parse for every message type in §3 and §4
-// ---------------------------------------------------------------------------
-
-describe('round-trip encode -> parse', () => {
-  it('INFO', () => {
-    expect(parseLine(encodeInfo())).toEqual({ type: 'INFO' });
-  });
-
-  it('PING', () => {
-    expect(parseLine(encodePing())).toEqual({ type: 'PING' });
-  });
-
-  it('ECHO', () => {
-    expect(parseLine(encodeEcho('hello'))).toEqual({ type: 'ECHO', text: 'hello' });
-  });
-
-  it('CLOCK RUN', () => {
-    expect(parseLine(encodeClockRun())).toEqual({ type: 'CLOCK', mode: 'RUN' });
-  });
-
-  it('CLOCK STOP', () => {
-    expect(parseLine(encodeClockStop())).toEqual({ type: 'CLOCK', mode: 'STOP' });
-  });
-
-  it('EXPIRE', () => {
-    expect(parseLine(encodeExpire())).toEqual({ type: 'EXPIRE' });
-  });
-
-  it('CONFIRM', () => {
-    expect(parseLine(encodeConfirm(17))).toEqual({ type: 'CONFIRM', seq: 17 });
-  });
-
-  it('TEST', () => {
-    expect(parseLine(encodeTest(1))).toEqual({ type: 'TEST', mode: 1 });
-  });
-
-  it('HELLO', () => {
-    expect(parseLine(encodeHello('2.0', '0.1.0', 0))).toEqual({
-      type: 'HELLO',
-      proto: '2.0',
-      fw: '0.1.0',
-      caps: 0,
-    });
-  });
-
-  it('EVT', () => {
-    expect(parseLine(encodeEvt('ADD_POINT', 'RED', 17))).toEqual({
+    expect(a.push('EVT ADD_POINT PRESS RED 17\n')).toEqual(['EVT ADD_POINT PRESS RED 17']);
+    expect(parseLine('EVT ADD_POINT PRESS RED 17')).toEqual({
       type: 'EVT',
-      action: 'ADD_POINT',
+      button: 'ADD_POINT',
+      gesture: 'PRESS',
       src: 'RED',
       seq: 17,
     });
   });
 
-  it('PONG', () => {
-    expect(parseLine(encodePong())).toEqual({ type: 'PONG' });
+  it('T2 strips a trailing carriage return', () => {
+    const a = createLineAssembler();
+    expect(a.push('EVT ADD_POINT PRESS RED 17\r\n')).toEqual(['EVT ADD_POINT PRESS RED 17']);
   });
 
-  it('LOG', () => {
-    expect(parseLine(encodeLog('some diagnostic text'))).toEqual({
-      type: 'LOG',
-      text: 'some diagnostic text',
+  it('T3 parses identically one byte per read', () => {
+    const a = createLineAssembler();
+    const bytes = [...'EVT ADD_POINT PRESS RED 17\n'];
+    expect(pushAll(a, bytes)).toEqual(['EVT ADD_POINT PRESS RED 17']);
+  });
+
+  it('T4 parses three lines from a single read, in order', () => {
+    const a = createLineAssembler();
+    expect(a.push('PONG\nEVT F1 PRESS GREEN 3\nLINK RED CONNECTED -50 90\n')).toEqual([
+      'PONG',
+      'EVT F1 PRESS GREEN 3',
+      'LINK RED CONNECTED -50 90',
+    ]);
+  });
+
+  it('T5 reassembles a line split mid-token across two reads', () => {
+    const a = createLineAssembler();
+    expect(pushAll(a, ['EVT ADD_PO', 'INT PRESS RED 17\n'])).toEqual(['EVT ADD_POINT PRESS RED 17']);
+  });
+
+  it('T6 ignores an unknown keyword without crashing', () => {
+    expect(parseLine('BOGUS FOO BAR')).toBeNull();
+  });
+
+  it('T7 rejects the v2.0 gestureless EVT shape — it must fail closed', () => {
+    const parsed = parseLine('EVT ADD_POINT RED 17');
+    expect(parsed.type).toBe('INVALID');
+    expect(parsed.keyword).toBe('EVT');
+  });
+
+  it('T8 rejects a non-numeric seq', () => {
+    expect(parseLine('EVT ADD_POINT PRESS RED xyz').type).toBe('INVALID');
+  });
+
+  it('T9 discards an overlong run and parses the line after its terminator', () => {
+    const a = createLineAssembler();
+    const overlong = 'X'.repeat(200);
+    const lines = pushAll(a, [`${overlong}\n`, 'PONG\n']);
+    expect(lines).toEqual(['PONG']);
+  });
+
+  it('T9c keeps the discard state across a chunk boundary', () => {
+    // A chunk boundary is an artifact of the transport and carries no
+    // information about the stream. Resynchronisation happens at the next \n,
+    // which may be several reads away.
+    const a = createLineAssembler();
+    const lines = pushAll(a, ['X'.repeat(80), 'Y'.repeat(80), 'Z'.repeat(80), '\n', 'PONG\n']);
+    expect(lines).toEqual(['PONG']);
+  });
+
+  it('T10 ignores empty lines', () => {
+    const a = createLineAssembler();
+    expect(a.push('\n\n\nEVT ADD_POINT PRESS RED 17\n')).toEqual(['EVT ADD_POINT PRESS RED 17']);
+  });
+
+  it('T11 rejects a seq past the modulus', () => {
+    expect(parseLine('EVT ADD_POINT PRESS RED 65536').type).toBe('INVALID');
+    expect(parseLine('EVT ADD_POINT PRESS RED 65535')).toMatchObject({ seq: 65535 });
+  });
+
+  it('T12 parses STATE', () => {
+    expect(parseLine('STATE RED SOLID 00A0FF OFF 000000')).toEqual({
+      type: 'STATE',
+      remote: 'RED',
+      f1: 'SOLID',
+      f1rgb: '00A0FF',
+      f2: 'OFF',
+      f2rgb: '000000',
     });
   });
 
-  it('ERR', () => {
-    expect(parseLine(encodeErr('BLE_INIT_FAILED'))).toEqual({
-      type: 'ERR',
-      text: 'BLE_INIT_FAILED',
-    });
+  it('T13 rejects a five-character colour', () => {
+    expect(parseLine('STATE RED SOLID 00A0F OFF 000000').type).toBe('INVALID');
+  });
+
+  it('T14 rejects LINK CONNECTED without rssi', () => {
+    // §7 makes rssi mandatory when connected: the signal indicator has no other
+    // source, so the short form would present as an indicator that silently
+    // never updates.
+    expect(parseLine('LINK RED CONNECTED').type).toBe('INVALID');
+    expect(parseLine('LINK RED DISCONNECTED')).toMatchObject({ state: 'DISCONNECTED', rssi: null });
+  });
+
+  it('T15 rejects an unknown waveform', () => {
+    expect(parseLine('HAP BOTH SPIN').type).toBe('INVALID');
+    expect(parseLine('HAP BOTH LONG')).toEqual({ type: 'HAP', target: 'BOTH', waveform: 'LONG' });
   });
 });
 
-describe('LINK optional trailing arguments', () => {
-  it('CONNECTED carries rssi and batt', () => {
-    expect(parseLine('LINK RED CONNECTED -52 87')).toEqual({
-      type: 'LINK',
-      remote: 'RED',
-      state: 'CONNECTED',
-      rssi: -52,
-      batt: 87,
+// ---------------------------------------------------------------------------
+// Message coverage
+// ---------------------------------------------------------------------------
+
+describe('EVT', () => {
+  it('accepts every button on every gesture from either remote', () => {
+    for (const button of BUTTONS) {
+      for (const gesture of GESTURES) {
+        for (const src of ['RED', 'GREEN']) {
+          expect(parseLine(encodeEvt(button, gesture, src, 1))).toEqual({
+            type: 'EVT',
+            button,
+            gesture,
+            src,
+            seq: 1,
+          });
+        }
+      }
+    }
+  });
+
+  it('rejects a button the protocol does not define', () => {
+    // TIME_UP and PERIOD_UP were v2.0 actions. They named officiating
+    // operations, which is exactly what v3.0 removed.
+    expect(parseLine('EVT TIME_UP PRESS RED 1').type).toBe('INVALID');
+    expect(parseLine('EVT PERIOD_UP PRESS GREEN 1').type).toBe('INVALID');
+  });
+
+  it('rejects an undefined gesture', () => {
+    expect(parseLine('EVT F1 DOUBLE_TAP RED 1').type).toBe('INVALID');
+  });
+});
+
+describe('HELLO', () => {
+  it('round-trips with the officiating set serial', () => {
+    expect(parseLine(encodeHello('3.0', '0.2.0', 'RR-0147', 0))).toEqual({
+      type: 'HELLO',
+      proto: '3.0',
+      fw: '0.2.0',
+      set: 'RR-0147',
+      caps: 0,
     });
   });
 
-  it('CONNECTED with rssi but unknown batt', () => {
-    expect(parseLine('LINK RED CONNECTED -52')).toEqual({
-      type: 'LINK',
-      remote: 'RED',
-      state: 'CONNECTED',
-      rssi: -52,
-      batt: null,
-    });
+  it('rejects a v2.0-shaped HELLO with no set serial', () => {
+    expect(parseLine('HELLO 2.0 0.1.0 0').type).toBe('INVALID');
   });
 
-  it('DISCONNECTED carries no rssi/batt', () => {
-    expect(parseLine('LINK GREEN DISCONNECTED')).toEqual({
-      type: 'LINK',
-      remote: 'GREEN',
-      state: 'DISCONNECTED',
-      rssi: null,
-      batt: null,
-    });
+  it('rejects a malformed set serial', () => {
+    expect(parseLine('HELLO 3.0 0.2.0 rr_0147! 0').type).toBe('INVALID');
+  });
+});
+
+describe('ACK', () => {
+  it('round-trips both forms', () => {
+    expect(parseLine(encodeAck(17))).toEqual({ type: 'ACK', seq: 17, silent: false });
+    expect(parseLine(encodeAck(17, { silent: true }))).toEqual({ type: 'ACK', seq: 17, silent: true });
   });
 
-  it('CONNECTING carries no rssi/batt', () => {
-    expect(parseLine('LINK GREEN CONNECTING')).toEqual({
-      type: 'LINK',
-      remote: 'GREEN',
-      state: 'CONNECTING',
-      rssi: null,
-      batt: null,
-    });
+  it('rejects an unknown modifier', () => {
+    expect(parseLine('ACK 17 LOUD').type).toBe('INVALID');
+  });
+});
+
+describe('STATE', () => {
+  it('always emits the complete state for one remote', () => {
+    expect(encodeState('GREEN', { f1: 'SOLID', f1rgb: '#c2f000' })).toBe('STATE GREEN SOLID C2F000 OFF 000000');
   });
 
-  it('rejects rssi/batt on a non-CONNECTED state', () => {
-    const result = parseLine('LINK RED DISCONNECTED -52 87');
-    expect(result.type).toBe('INVALID');
+  it('is byte-identical for identical state, so it can be deduplicated safely', () => {
+    const args = { f1: 'SOLID', f1rgb: '00A0FF', f2: 'OFF', f2rgb: '000000' };
+    expect(encodeState('RED', args)).toBe(encodeState('RED', { ...args }));
+  });
+});
+
+describe('normaliseRgb', () => {
+  it('accepts hash-prefixed and lowercase input', () => {
+    expect(normaliseRgb('#c2f000')).toBe('C2F000');
+    expect(normaliseRgb('C2F000')).toBe('C2F000');
   });
 
-  it('round-trips encodeLink for all three states', () => {
+  it('fails an unusable value to black rather than to a malformed line', () => {
+    // An indicator that fails dark is recoverable; a line the dongle discards
+    // leaves the remote rendering whatever it had before, indefinitely.
+    expect(normaliseRgb('nope')).toBe('000000');
+    expect(normaliseRgb(undefined)).toBe('000000');
+    expect(normaliseRgb('#fff')).toBe('000000');
+  });
+});
+
+describe('HAP and CFG', () => {
+  it('round-trips every waveform to every target', () => {
+    for (const waveform of WAVEFORMS) {
+      for (const target of ['RED', 'GREEN', 'BOTH']) {
+        expect(parseLine(encodeHap(target, waveform))).toEqual({ type: 'HAP', target, waveform });
+      }
+    }
+  });
+
+  it('rejects out-of-range CFG values', () => {
+    expect(parseLine(encodeCfg('BOTH', 80, 60))).toEqual({ type: 'CFG', target: 'BOTH', haptic: 80, bright: 60 });
+    expect(parseLine('CFG BOTH 101 60').type).toBe('INVALID');
+    expect(parseLine('CFG BOTH 80 -1').type).toBe('INVALID');
+  });
+});
+
+describe('LINK and JOIN', () => {
+  it('round-trips the connected form with and without battery', () => {
     expect(parseLine(encodeLink('RED', 'CONNECTED', -52, 87))).toEqual({
       type: 'LINK',
       remote: 'RED',
@@ -252,37 +250,45 @@ describe('LINK optional trailing arguments', () => {
       rssi: -52,
       batt: 87,
     });
-    expect(parseLine(encodeLink('RED', 'CONNECTED', -52, null))).toEqual({
-      type: 'LINK',
-      remote: 'RED',
-      state: 'CONNECTED',
-      rssi: -52,
-      batt: null,
-    });
-    expect(parseLine(encodeLink('GREEN', 'DISCONNECTED'))).toEqual({
-      type: 'LINK',
-      remote: 'GREEN',
-      state: 'DISCONNECTED',
-      rssi: null,
-      batt: null,
-    });
+    expect(parseLine(encodeLink('RED', 'CONNECTED', -52, null))).toMatchObject({ rssi: -52, batt: null });
+  });
+
+  it('rejects rssi on a disconnected remote', () => {
+    expect(parseLine('LINK RED DISCONNECTED -52').type).toBe('INVALID');
+  });
+
+  it('rejects an out-of-range battery', () => {
+    expect(parseLine('LINK RED CONNECTED -52 101').type).toBe('INVALID');
+  });
+
+  it('round-trips JOIN', () => {
+    expect(parseLine(encodeJoin('GREEN'))).toEqual({ type: 'JOIN', remote: 'GREEN' });
   });
 });
 
-describe('sequence wrap helper', () => {
-  it('wraps 999 -> 0', () => {
-    expect(nextSeq(999)).toBe(0);
+describe('TEST', () => {
+  it('round-trips a mode', () => {
+    expect(parseLine(encodeTest(4))).toEqual({ type: 'TEST', mode: 4 });
   });
-  it('increments normally', () => {
+});
+
+// ---------------------------------------------------------------------------
+// Sequence helpers
+// ---------------------------------------------------------------------------
+
+describe('sequence numbers', () => {
+  it('wraps at the modulus', () => {
+    expect(nextSeq(SEQ_MODULUS - 1)).toBe(0);
     expect(nextSeq(17)).toBe(18);
   });
-});
 
-describe('unknown keywords', () => {
-  it('are ignored silently (returns null)', () => {
-    expect(parseLine('BOGUS FOO BAR')).toBeNull();
+  it('measures forward distance across the wrap', () => {
+    expect(seqDistance(20, 17)).toBe(3);
+    expect(seqDistance(1, SEQ_MODULUS - 1)).toBe(2);
+    expect(seqDistance(17, 17)).toBe(0);
   });
-  it('empty line returns null', () => {
-    expect(parseLine('')).toBeNull();
+
+  it('gives a large distance for a backwards seq, which is how a wrap is told from a gap', () => {
+    expect(seqDistance(17, 20)).toBeGreaterThan(SEQ_MODULUS / 2);
   });
 });

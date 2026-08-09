@@ -1,0 +1,28 @@
+<!-- @dsCard group="Components" viewport="700x300" name="Forms" subtitle="Field, Input, Select, Checkbox, Radio, Switch" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>html,body{margin:0;background:var(--paper)}.w{padding:20px 24px}.g{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.lb{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-400);margin:0 0 8px}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root" class="w"></div>
+<script type="text/babel">const { Field, Input, Select, Checkbox, Radio, Switch } = window.RefRemoteDesignSystem_6d7f39;
+function Demo(){const [q,setQ]=React.useState('');const [rs,setRs]=React.useState('IBJJF 2025');const [adv,setAdv]=React.useState(true);const [m,setM]=React.useState('gi');const [bz,setBz]=React.useState(true);
+return (<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
+<div style={{display:'flex',flexDirection:'column',gap:14}}>
+<Field label="Search athletes"><Input icon="search" placeholder="Surname" value={q} onChange={setQ}/></Field>
+<Field label="Ruleset" hint="Applies to every mat in this division."><Select value={rs} onChange={setRs} options={['IBJJF 2025','UWW Freestyle','IJF','ADCC','Sub-only']}/></Field>
+<Field label="Match ID" error="No match with this ID on Mat 3."><Input mono size="sm" value="R-9902" invalid onChange={()=>{}}/></Field>
+</div>
+<div style={{display:'flex',flexDirection:'column',gap:14}}>
+<div className="lb" style={{margin:0}}>Scoring options</div>
+<Checkbox checked={adv} onChange={setAdv} label="Count advantages" description="IBJJF only."/>
+<Checkbox checked={false} onChange={()=>{}} label="Sudden death overtime"/>
+<div style={{display:'flex',gap:20}}>
+<Radio name="mode" value="gi" checked={m==='gi'} onChange={setM} label="Gi"/>
+<Radio name="mode" value="nogi" checked={m==='nogi'} onChange={setM} label="No-gi"/>
+</div>
+<Switch checked={bz} onChange={setBz} label="Buzzer on this mat"/>
+<Switch checked={false} onChange={()=>{}} size="sm" label="Auto-advance bracket"/>
+</div></div>);}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

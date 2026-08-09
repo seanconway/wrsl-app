@@ -1,5 +1,21 @@
 import { createLineAssembler } from '../protocol/protocol.js';
 
+/**
+ * USB identity filter for the port picker.
+ *
+ * PLACEHOLDER. The dongle currently enumerates with Zephyr's test identity
+ * (VID 0x2fe3, PID 0x0004, "CDC ACM serial backend"), which is not usable in
+ * production for two reasons: users can pick the wrong device, and a site
+ * policy allowlisting 0x2fe3 would grant this origin access to ANY Zephyr
+ * device the user plugs in — which no IT department will approve, and which
+ * blocks the enterprise deployment path entirely (PLAN.md §9, D5).
+ *
+ * Replace with the real VID/PID when one is assigned. Until then the filter is
+ * applied anyway, so the picker is narrowed and the failure mode of forgetting
+ * this line does not exist.
+ */
+export const DONGLE_FILTERS = [{ usbVendorId: 0x2fe3, usbProductId: 0x0004 }];
+
 // The transport interface every dongle transport implements:
 //
 //   connect({ port } = {})        -> Promise<void>   establishes the link
@@ -43,7 +59,7 @@ export class WebSerialTransport {
 
   /** Prompts the user to pick a port (first-time grant only). */
   static async requestPort() {
-    return navigator.serial.requestPort();
+    return navigator.serial.requestPort({ filters: DONGLE_FILTERS });
   }
 
   async connect({ port } = {}) {
@@ -51,7 +67,7 @@ export class WebSerialTransport {
       throw new Error('Web Serial API is not available in this browser.');
     }
 
-    this.port = port ?? (await navigator.serial.requestPort());
+    this.port = port ?? (await navigator.serial.requestPort({ filters: DONGLE_FILTERS }));
     await this.port.open({ baudRate: this.baudRate, dataBits: 8, parity: 'none', stopBits: 1 });
     this.port.addEventListener('disconnect', this._handleHardwareDisconnect);
 

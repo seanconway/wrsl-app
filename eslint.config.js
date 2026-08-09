@@ -4,7 +4,11 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default [
-  { ignores: ['dist'] },
+  // The design system is vendored: it is authored elsewhere and copied in
+  // whole, so linting it produces findings nobody in this repo can act on. The
+  // one file we do maintain (components/core/Icon.jsx, replaced to drop its CDN
+  // fetch) is small enough to review by eye.
+  { ignores: ['dist', 'design-system'] },
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {

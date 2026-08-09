@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// Plays the dongle side of the wire protocol over a real (virtual) serial
-// port, for a one-time rehearsal of the app against real Web Serial before
-// firmware exists. NOT part of the automated test suite — see the README
-// for how to wire up a virtual port with socat / com0com.
+// Plays the dongle side of PROTOCOL.md v3.0 over a real (virtual) serial port,
+// so the application can be rehearsed against actual Web Serial before any
+// firmware exists. NOT part of the automated test suite — see the README for
+// how to wire up a virtual port with socat / com0com.
+//
+// It answers INFO, PING and ECHO; logs every STATE, HAP, CFG and ACK it
+// receives; enforces the app-supervision timeout of §8; and drives all five
+// TEST modes of §10.2.
 //
 // Usage:
-//   node tools/fake_dongle.js <serial-path> [--script <name>]
+//   node tools/fake_dongle.js <serial-path>
 //
 // Examples:
 //   node tools/fake_dongle.js /dev/ttys004
@@ -17,31 +21,35 @@ import {
   parseLine,
   encodeHello,
   encodeLink,
+  encodeJoin,
   encodePong,
   encodeEcho,
   encodeEvt,
   encodeErr,
+  encodeLog,
+  BUTTONS,
+  GESTURES,
+  SEQ_MODULUS,
+  PROTOCOL_VERSION,
 } from '../src/protocol/protocol.js';
 
-const APP_TIMEOUT_MS = 5000;
+const APP_TIMEOUT_MS = 2500;
 const LINK_REEMIT_MS = 10000;
-const EVT_ACTIONS = [
-  'TOGGLE_TIMER',
-  'ADD_POINT',
-  'REMOVE_POINT',
-  'TIME_UP',
-  'TIME_DOWN',
-  'PERIOD_UP',
-  'PERIOD_DOWN',
-];
+const ACK_WINDOW_MS = 120;
+const SET_SERIAL = 'RR-0147';
+const FW_VERSION = '0.2.0-fake';
+
+const REMOTES = ['RED', 'GREEN'];
+// Hold-repeat exists only for clock adjustment (§5.1).
+const REPEATING = new Set(['FORWARD', 'BACKWARD']);
 
 function parseArgs(argv) {
-  const [path, ...rest] = argv;
+  const [path] = argv;
   if (!path) {
     console.error('Usage: node tools/fake_dongle.js <serial-path>');
     process.exit(1);
   }
-  return { path, rest };
+  return { path };
 }
 
 function log(...args) {
@@ -52,15 +60,22 @@ class FakeDongle {
   constructor(port) {
     this.port = port;
     this.assembler = createLineAssembler();
-    this.clockState = 'STOPPED';
     this.seq = 0;
     this.appTimeoutTimer = null;
     this.linkReemitTimer = null;
     this.testModeTimer = null;
+    this.supervisionSuspended = false;
+    this.appDown = false;
+
+    // The pending table of §5.3: seq -> { src, timer }. Eight entries is ample.
+    this.pending = new Map();
+
+    this.config = { haptic: 100, bright: 100 };
     this.linkStatus = {
       RED: { state: 'CONNECTED', rssi: -50, batt: 92 },
       GREEN: { state: 'CONNECTED', rssi: -58, batt: 77 },
     };
+    this.indicators = { RED: null, GREEN: null };
 
     port.on('data', (chunk) => this._onData(chunk));
     port.on('close', () => log('port closed'));
@@ -69,9 +84,10 @@ class FakeDongle {
 
   start() {
     this._armAppTimeout();
-    this._armLinkReemit();
-    log('fake dongle running — type is not supported here, this is a scripted peer.');
-    log('Waiting for INFO from the app...');
+    this.linkReemitTimer = setInterval(() => this._reemitLinks(), LINK_REEMIT_MS);
+    // Boot-time HELLO is best-effort and never gated on DTR (§4.2).
+    this.send(encodeHello(`${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`, FW_VERSION, SET_SERIAL, 0));
+    log('fake dongle running. Waiting for INFO from the app...');
   }
 
   send(line) {
@@ -81,8 +97,30 @@ class FakeDongle {
 
   nextSeq() {
     const s = this.seq;
-    this.seq = (this.seq + 1) % 1000;
+    this.seq = (this.seq + 1) % SEQ_MODULUS;
     return s;
+  }
+
+  /** Emits an EVT and registers it for acknowledgement, exactly as the firmware
+   *  must — so the app is rehearsed against the real timing, not a stub. */
+  sendEvt(button, gesture, src) {
+    const seq = this.nextSeq();
+    this.send(encodeEvt(button, gesture, src, seq));
+
+    const timer = setTimeout(() => {
+      this.pending.delete(seq);
+      // No failure haptic, by design. Absence of confirmation is the signal:
+      // no tap means the press did not land, press again.
+      log(`!!! seq ${seq} expired without ACK after ${ACK_WINDOW_MS} ms — no tap fired`);
+    }, ACK_WINDOW_MS);
+
+    this.pending.set(seq, { src, timer, sentAt: Date.now() });
+    if (this.pending.size > 8) {
+      const oldest = this.pending.keys().next().value;
+      clearTimeout(this.pending.get(oldest).timer);
+      this.pending.delete(oldest);
+    }
+    return seq;
   }
 
   _onData(chunk) {
@@ -93,9 +131,13 @@ class FakeDongle {
   _handleLine(line) {
     log('RX', line);
     this._armAppTimeout();
+    if (this.appDown) {
+      this.appDown = false;
+      log('app is back');
+    }
 
     const msg = parseLine(line);
-    if (msg === null) return; // unknown keyword: ignore silently
+    if (msg === null) return; // unknown keyword: ignore silently (§2.2)
     if (msg.type === 'INVALID') {
       log(`ignored malformed line: "${line}" (${msg.reason})`);
       return;
@@ -111,15 +153,22 @@ class FakeDongle {
       case 'ECHO':
         this.send(encodeEcho(msg.text));
         break;
-      case 'CLOCK':
-        this.clockState = msg.mode === 'RUN' ? 'RUNNING' : 'STOPPED';
-        log(`clock state -> ${this.clockState}`);
+      case 'ACK':
+        this._handleAck(msg);
         break;
-      case 'EXPIRE':
-        log('*** expiration haptic (long pulse) ***');
+      case 'STATE':
+        this.indicators[msg.remote] = msg;
+        log(
+          `    ${msg.remote} indicators: F1 ${msg.f1}${msg.f1 === 'SOLID' ? ` #${msg.f1rgb}` : ''} · ` +
+            `F2 ${msg.f2}${msg.f2 === 'SOLID' ? ` #${msg.f2rgb}` : ''}`,
+        );
         break;
-      case 'CONFIRM':
-        log(`*** confirmation haptic for seq ${msg.seq} ***`);
+      case 'HAP':
+        log(`    *** haptic ${msg.waveform} on ${msg.target} ***`);
+        break;
+      case 'CFG':
+        this.config = { haptic: msg.haptic, bright: msg.bright };
+        log(`    config: haptic ${msg.haptic}%, brightness ${msg.bright}%`);
         break;
       case 'TEST':
         this._handleTest(msg.mode);
@@ -129,34 +178,47 @@ class FakeDongle {
     }
   }
 
+  _handleAck(msg) {
+    const entry = this.pending.get(msg.seq);
+    if (!entry) {
+      // Unknown or already-acknowledged seq: ignore silently.
+      log(`    ACK ${msg.seq} for an unknown or expired entry — ignored`);
+      return;
+    }
+    clearTimeout(entry.timer);
+    this.pending.delete(msg.seq);
+    const elapsed = Date.now() - entry.sentAt;
+    log(
+      msg.silent
+        ? `    seq ${msg.seq} consumed silently (inert) in ${elapsed} ms`
+        : `    *** acknowledgement TAP on ${entry.src} *** (${elapsed} ms)`,
+    );
+  }
+
   _replyInfo() {
-    this.send(encodeHello('2.0', '0.1.0', 0));
-    for (const remote of ['RED', 'GREEN']) {
+    this.send(encodeHello(`${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`, FW_VERSION, SET_SERIAL, 0));
+    this._reemitLinks();
+  }
+
+  _reemitLinks() {
+    for (const remote of REMOTES) {
       const status = this.linkStatus[remote];
-      this.send(encodeLink(remote, status.state, status.rssi, status.batt));
+      if (status.state === 'CONNECTED') {
+        this.send(encodeLink(remote, status.state, status.rssi, status.batt));
+      } else {
+        this.send(encodeLink(remote, status.state));
+      }
     }
   }
 
   _armAppTimeout() {
+    if (this.supervisionSuspended) return;
     clearTimeout(this.appTimeoutTimer);
     this.appTimeoutTimer = setTimeout(() => {
-      if (this.clockState === 'RUNNING') {
-        this.clockState = 'STOPPED';
-        this.send(encodeErr('APP_TIMEOUT'));
-        log('app timed out — heartbeat stopped');
-      }
+      this.appDown = true;
+      this.send(encodeErr('APP_TIMEOUT'));
+      log('app timed out — remotes would now render link-lost');
     }, APP_TIMEOUT_MS);
-  }
-
-  _armLinkReemit() {
-    this.linkReemitTimer = setInterval(() => {
-      for (const remote of ['RED', 'GREEN']) {
-        const status = this.linkStatus[remote];
-        if (status.state === 'CONNECTED') {
-          this.send(encodeLink(remote, status.state, status.rssi, status.batt));
-        }
-      }
-    }, LINK_REEMIT_MS);
   }
 
   _handleTest(mode) {
@@ -164,44 +226,79 @@ class FakeDongle {
     this.testModeTimer = null;
 
     if (mode === 0) {
-      log('TEST 0: stopped');
+      this.supervisionSuspended = false;
+      this._armAppTimeout();
+      this.send(encodeLog('TEST 0: stopped, supervision active'));
       return;
     }
 
     if (mode === 1) {
-      log('TEST 1: emitting each EVT action once, alternating RED/GREEN');
+      log('TEST 1: one EVT per button, PRESS, alternating RED/GREEN');
       let i = 0;
-      const remotes = ['RED', 'GREEN'];
       this.testModeTimer = setInterval(() => {
-        if (i >= EVT_ACTIONS.length) {
+        if (i >= BUTTONS.length) {
           clearInterval(this.testModeTimer);
           this.testModeTimer = null;
           return;
         }
-        const action = EVT_ACTIONS[i];
-        const src = remotes[i % 2];
-        this.send(encodeEvt(action, src, this.nextSeq()));
+        this.sendEvt(BUTTONS[i], 'PRESS', REMOTES[i % 2]);
         i += 1;
       }, 500);
       return;
     }
 
     if (mode === 2) {
-      log('TEST 2: emitting random EVT lines at ~5Hz until TEST 0');
-      const remotes = ['RED', 'GREEN'];
+      log('TEST 2: random EVT lines at ~5 Hz until TEST 0');
       this.testModeTimer = setInterval(() => {
-        const action = EVT_ACTIONS[Math.floor(Math.random() * EVT_ACTIONS.length)];
-        const src = remotes[Math.floor(Math.random() * remotes.length)];
-        this.send(encodeEvt(action, src, this.nextSeq()));
+        const button = BUTTONS[Math.floor(Math.random() * BUTTONS.length)];
+        const pool = REPEATING.has(button) ? GESTURES : GESTURES.slice(0, 2);
+        const gesture = pool[Math.floor(Math.random() * pool.length)];
+        this.sendEvt(button, gesture, REMOTES[Math.floor(Math.random() * REMOTES.length)]);
       }, 200);
       return;
     }
 
     if (mode === 3) {
-      log('TEST 3: link supervision suspended (bench mode) — app timeout will not fire');
+      this.supervisionSuspended = true;
       clearTimeout(this.appTimeoutTimer);
       this.appTimeoutTimer = null;
-      this._armAppTimeout = () => {}; // no-op until process restart
+      this.send(encodeLog('TEST 3: supervision suspended until TEST 0'));
+      return;
+    }
+
+    if (mode === 4) {
+      // The gesture axis is new at v3.0 and no hardware exists that can produce
+      // it, so this is the only way to exercise the app's HOLD and HOLD_REP
+      // handling before remotes are built.
+      log('TEST 4: every gesture on every button, both remotes');
+      const script = [];
+      for (const remote of REMOTES) {
+        for (const button of BUTTONS) {
+          for (const gesture of GESTURES) {
+            if (gesture === 'HOLD_REP' && !REPEATING.has(button)) continue;
+            script.push([button, gesture, remote]);
+          }
+        }
+      }
+      let i = 0;
+      this.testModeTimer = setInterval(() => {
+        if (i >= script.length) {
+          clearInterval(this.testModeTimer);
+          this.testModeTimer = null;
+          this.send(encodeLog(`TEST 4: complete, ${script.length} events`));
+          return;
+        }
+        this.sendEvt(...script[i]);
+        i += 1;
+      }, 250);
+      return;
+    }
+
+    if (mode === 5) {
+      // Not in the spec — a rehearsal convenience for the JOIN -> STATE path,
+      // which is otherwise unreachable without real remotes.
+      log('TEST 5: simulating both remotes rejoining');
+      for (const remote of REMOTES) this.send(encodeJoin(remote));
       return;
     }
 
@@ -219,8 +316,7 @@ async function main() {
   });
 
   log(`opened ${path} at 115200 baud`);
-  const dongle = new FakeDongle(port);
-  dongle.start();
+  new FakeDongle(port).start();
 }
 
 main().catch((err) => {

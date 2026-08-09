@@ -1,0 +1,31 @@
+:root{
+/* --- Brand: acid lime. The "live / valid / go" colour. Never used for athlete identity. --- */
+--lime-100:#F1FFC4;--lime-200:#E4FF8E;--lime-300:#D6FB5A;--lime-400:#CBF62B;
+--lime-500:#C2F000;--lime-600:#9CC300;--lime-700:#74910B;--lime-800:#4E6210;--lime-900:#2C380E;
+
+/* --- Ink: the mat-black neutral ramp. Slightly green-shifted so it sits with lime. --- */
+--ink-950:#070908;--ink-900:#0B0D0C;--ink-850:#111413;--ink-800:#171B19;
+--ink-700:#1F2422;--ink-600:#2B322E;--ink-500:#3D453F;--ink-400:#656E68;
+--ink-300:#97A09A;--ink-200:#C6CCC8;--ink-100:#E4E8E5;--ink-50:#F3F5F3;
+
+/* --- Paper: warm off-white surfaces for admin + marketing --- */
+--paper:#FAFAF7;--paper-raised:#FFFFFF;--paper-sunken:#F1F1EC;
+
+/* --- Athlete corners. Functional, not decorative: red and green are fixed by the
+       ruleset. Never re-map these to brand colours, and never use them for UI meaning. --- */
+--athlete-red:#E03127;--athlete-red-deep:#B31F17;--athlete-red-tint:#FBE7E5;
+--athlete-green:#12A150;--athlete-green-deep:#0B7038;--athlete-green-tint:#E3F5EA;
+--athlete-white:#FFFFFF;--athlete-white-line:#D8DCD9;
+
+/* --- Signals. Note: "go" is lime, not green — green belongs to the green corner and
+       must never be borrowed for UI state. Blue is UI-informational only. --- */
+--signal-go:#C2F000;--signal-warn:#F5A300;--signal-stop:#E03127;--signal-info:#1B5CD8;
+--signal-live:#C2F000;
+
+/* --- Fixed transparencies --- */
+--alpha-scrim:rgba(7,9,8,.72);
+--alpha-hairline-dark:rgba(255,255,255,.10);
+--alpha-hairline-light:rgba(11,13,12,.12);
+--alpha-press-dark:rgba(255,255,255,.08);
+--alpha-press-light:rgba(11,13,12,.06);
+}

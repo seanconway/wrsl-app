@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Design system distribution archive — the extracted tree in design-system/ is what ships.
+RefRemote Design System.zip

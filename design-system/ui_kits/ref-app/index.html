@@ -1,0 +1,81 @@
+<!-- @dsCard group="Ref App" viewport="820x860" name="Referee handset" subtitle="Scoring pad, match queue and device pairing. Glove-sized targets throughout." -->
+<!doctype html><html><head><meta charset="utf-8"><title>RefRemote · Ref App</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>html,body{margin:0;background:var(--ink-900)}#root{width:820px;height:860px;display:grid;place-items:center}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head>
+<body><div id="root"></div>
+<script type="text/babel" src="Chrome.jsx"></script>
+<script type="text/babel" src="ScoringScreen.jsx"></script>
+<script type="text/babel" src="QueueScreen.jsx"></script>
+<script type="text/babel" src="DeviceScreen.jsx"></script>
+<script type="text/babel">
+const { Dialog, Button, Toast } = window.RefRemoteDesignSystem_6d7f39;
+const QUEUE = [
+  { id: 'R-1183', red: 'Silva', green: 'Vandenberghe', division: 'ADULT BLUE · −76KG', state: 'next' },
+  { id: 'R-1184', red: 'Aoki', green: 'Ferreira', division: 'ADULT BLUE · −76KG' },
+  { id: 'R-1185', red: 'Okafor', green: 'Nowak', division: 'ADULT BLUE · −88KG' },
+  { id: 'R-1186', red: 'Haddad', green: 'Lindqvist', division: 'MASTER 1 PURPLE · −82KG' },
+  { id: 'R-1187', red: 'Baptiste', green: 'Yilmaz', division: 'MASTER 1 PURPLE · −82KG' },
+];
+const START = {
+  matchId: 'R-1183', round: 'R16', seconds: 272, running: true,
+  red: { name: 'Silva, M.', points: 4, adv: 1, pen: 1 },
+  green: { name: 'Vandenberghe, J.', points: 7, adv: 0, pen: 0 },
+};
+
+function App() {
+  const [tab, setTab] = React.useState('match');
+  const [m, setM] = React.useState(START);
+  const [confirm, setConfirm] = React.useState(false);
+  const [toast, setToast] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!m.running) return;
+    const t = setInterval(() => setM((p) => ({ ...p, seconds: Math.max(0, p.seconds - 1) })), 1000);
+    return () => clearInterval(t);
+  }, [m.running]);
+  React.useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3200); return () => clearTimeout(t); }, [toast]);
+
+  const act = (kind, corner, n) => {
+    if (kind === 'toggle') return setM((p) => ({ ...p, running: !p.running }));
+    if (kind === 'end') return setConfirm(true);
+    setM((p) => {
+      const a = { ...p[corner] };
+      if (kind === 'point') a.points += n;
+      if (kind === 'adv') a.adv += 1;
+      if (kind === 'pen') a.pen += 1;
+      if (kind === 'undo') a.points = Math.max(0, a.points - 1);
+      return { ...p, [corner]: a };
+    });
+  };
+
+  const finish = () => {
+    setConfirm(false);
+    setToast({ tone: 'go', title: 'Result sent to bracket', detail: `Vandenberghe def. Silva ${m.green.points}–${m.red.points}.` });
+    setM({ ...START, seconds: 300, running: false, red: { name: 'Aoki, K.', points: 0, adv: 0, pen: 0 }, green: { name: 'Ferreira, L.', points: 0, adv: 0, pen: 0 }, matchId: 'R-1184' });
+    setTab('match');
+  };
+
+  return (
+    <Phone>
+      <StatusBar mat={3} battery={87} link="ok" />
+      {tab === 'match' && <ScoringScreen m={m} act={act} />}
+      {tab === 'queue' && <QueueScreen queue={QUEUE} onStart={() => setTab('match')} />}
+      {tab === 'device' && <DeviceScreen />}
+      <TabBar value={tab} onChange={setTab} />
+      {confirm && (
+        <Dialog danger eyebrow={`Mat 3 · ${m.matchId}`} title="End this match?" width={330} onClose={() => setConfirm(false)}
+          footer={<><Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>Cancel</Button><Button variant="danger" size="sm" onClick={finish}>End match</Button></>}>
+          The score is final and goes straight to the bracket.
+        </Dialog>
+      )}
+      {toast && <div style={{ position: 'absolute', left: 12, right: 12, bottom: 84 }}><Toast {...toast} onDismiss={() => setToast(null)} style={{ minWidth: 0 }} /></div>}
+    </Phone>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>

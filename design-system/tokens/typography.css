@@ -1,0 +1,30 @@
+:root{
+--font-ui:"Saira","Helvetica Neue",Arial,sans-serif;
+--font-display:"Saira","Helvetica Neue",Arial,sans-serif;
+--font-plate:"Saira Condensed","Saira","Helvetica Neue",Arial,sans-serif;
+--font-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+
+--fw-regular:400; /* @kind font */
+--fw-medium:500; /* @kind font */
+--fw-semibold:600; /* @kind font */
+--fw-bold:700; /* @kind font */
+--fw-black:900; /* @kind font */
+
+/* Scale. Steps below 13px are forbidden in matside surfaces. */
+--fs-11:11px;--fs-12:12px;--fs-13:13px;--fs-14:14px;--fs-16:16px;--fs-18:18px;
+--fs-21:21px;--fs-25:25px;--fs-31:31px;--fs-39:39px;--fs-49:49px;--fs-62:62px;
+--fs-78:78px;--fs-104:104px;--fs-148:148px;--fs-220:220px;
+
+--lh-tight:0.92; /* @kind font */
+--lh-snug:1.1; /* @kind font */
+--lh-normal:1.45; /* @kind font */
+--lh-loose:1.6; /* @kind font */
+
+--ls-mega:-0.03em; /* @kind font */
+--ls-display:-0.02em; /* @kind font */
+--ls-normal:0em; /* @kind font */
+--ls-label:0.08em; /* @kind font */
+--ls-eyebrow:0.16em; /* @kind font */
+
+--num-tabular:tabular-nums; /* @kind font */
+}

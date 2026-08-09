@@ -1,313 +1,446 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DongleService, PING_INTERVAL_MS, LINK_STALE_MS } from './DongleService.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { FakeDongleTransport } from '../transport/FakeDongleTransport.js';
-import { scoreboardReducer, createInitialScoreboardState } from '../scoreboard/scoreboardReducer.js';
+import {
+  DongleService,
+  PING_INTERVAL_MS,
+  LINK_STALE_MS,
+  HEARTBEAT_INTERVAL_MS,
+  BEAT_SUPPRESSION_MS,
+  BEAT_SUPPRESSION_MAX_MS,
+} from './DongleService.js';
+import {
+  matchReducer,
+  createInitialMatchState,
+  selectIndicators,
+  isInertInput,
+  NOTIFY,
+} from '../match/matchReducer.js';
 
-function createHarness() {
+const HELLO = 'HELLO 3.0 0.2.0 RR-0147 0';
+
+/**
+ * A harness that wires a real match reducer to the service, because the two
+ * are only correct together: the service's acknowledgement decision depends on
+ * the ruleset's inert bindings, and its indicator assertion depends on match
+ * state. Testing the service against a stub reducer would test a shape the
+ * application does not have.
+ */
+function harness({ rulesetId = 'ncaa' } = {}) {
   const transport = new FakeDongleTransport();
-  let state = createInitialScoreboardState();
-  const events = { logs: [], linkChanges: [], staleChanges: [], handshake: [] };
+  const logs = [];
+  let clock = 1000;
+  let state = createInitialMatchState(rulesetId, { now: clock });
 
-  let service;
   const dispatch = (action) => {
-    state = scoreboardReducer(state, action);
-    service.syncScoreboardState(state);
+    state = matchReducer(state, action);
   };
 
-  service = new DongleService(transport, {
+  const service = new DongleService(transport, {
     dispatch,
-    onLog: (msg) => events.logs.push(msg),
-    onLinkChange: (remote, status) => events.linkChanges.push({ remote, status }),
-    onStaleChange: (stale) => events.staleChanges.push(stale),
-    onHandshakeStateChange: (hs) => events.handshake.push(hs),
+    getMatchState: () => state,
+    selectIndicators: () => selectIndicators(state),
+    isInertInput,
+    onLog: (msg) => logs.push(msg),
+    now: () => clock,
   });
-  service.syncScoreboardState(state); // prime — first call never emits
 
-  return { transport, service, events, getState: () => state, dispatch };
-}
-
-async function handshake(harness, proto = '2.0') {
-  await harness.service.connect();
-  harness.transport.simulateLine(`HELLO ${proto} 0.1.0 0`);
+  return {
+    transport,
+    service,
+    logs,
+    get state() {
+      return state;
+    },
+    dispatch,
+    advance(ms) {
+      clock += ms;
+      vi.advanceTimersByTime(ms);
+    },
+    setClock(ms) {
+      clock = ms;
+    },
+    async connectAndHandshake() {
+      await service.connect();
+      transport.simulateLine(HELLO);
+      transport.outbox.length = 0;
+    },
+  };
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
+// ---------------------------------------------------------------------------
 
-describe('connection lifecycle (§8)', () => {
-  it('1. sends INFO on connect; on HELLO 2.0, sends CLOCK STOP and starts the PING cadence', async () => {
-    const h = createHarness();
+describe('handshake', () => {
+  it('sends INFO on connect', async () => {
+    const h = harness();
     await h.service.connect();
     expect(h.transport.outbox).toEqual(['INFO']);
-
-    h.transport.simulateLine('HELLO 2.0 0.1.0 0');
-    expect(h.transport.outbox).toEqual(['INFO', 'CLOCK STOP']);
-    expect(h.service.handshakeState).toBe('ready');
-
-    vi.advanceTimersByTime(PING_INTERVAL_MS);
-    expect(h.transport.outbox).toEqual(['INFO', 'CLOCK STOP', 'PING']);
-
-    vi.advanceTimersByTime(PING_INTERVAL_MS);
-    expect(h.transport.outbox).toEqual(['INFO', 'CLOCK STOP', 'PING', 'PING']);
   });
 
-  it('2. a major version mismatch (HELLO 3.0) refuses to operate', async () => {
-    const h = createHarness();
+  it('sends CFG then a STATE line per remote, unprompted', async () => {
+    // Steps 3 and 4 of PROTOCOL.md §4.2. Asserting state unprompted is what
+    // makes a mid-match set substitution a physical swap and nothing more.
+    const h = harness();
     await h.service.connect();
-    h.transport.simulateLine('HELLO 3.0 0.1.0 0');
+    h.transport.outbox.length = 0;
+    h.transport.simulateLine(HELLO);
 
+    expect(h.transport.outbox).toEqual([
+      'CFG BOTH 80 70',
+      'STATE RED OFF 000000 OFF 000000',
+      'STATE GREEN OFF 000000 OFF 000000',
+    ]);
+    expect(h.service.handshakeState).toBe('ready');
+  });
+
+  it('records the officiating set identity', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    expect(h.service.identity).toEqual({ proto: '3.0', fw: '0.2.0', set: 'RR-0147', caps: 0 });
+  });
+
+  it('refuses a different major protocol version', async () => {
+    const h = harness();
+    await h.service.connect();
+    h.transport.simulateLine('HELLO 2.0 0.1.0 RR-0147 0');
     expect(h.service.handshakeState).toBe('refused');
-    expect(h.transport.outbox).toEqual(['INFO']); // no CLOCK STOP, no PING started
-    vi.advanceTimersByTime(PING_INTERVAL_MS * 2);
-    expect(h.transport.outbox).toEqual(['INFO']);
+    expect(h.logs.join()).toMatch(/update the dongle firmware/i);
   });
 
-  it('3. a minor version mismatch (HELLO 2.1) warns but continues operating', async () => {
-    const h = createHarness();
+  it('warns and continues on a differing minor version', async () => {
+    const h = harness();
     await h.service.connect();
-    h.transport.simulateLine('HELLO 2.1 0.1.0 0');
-
+    h.transport.simulateLine('HELLO 3.1 0.3.0 RR-0147 0');
     expect(h.service.handshakeState).toBe('ready');
-    expect(h.transport.outbox).toEqual(['INFO', 'CLOCK STOP']);
-    expect(h.events.logs.some((l) => l.includes('WARN'))).toBe(true);
+    expect(h.logs.join()).toMatch(/minor version/i);
   });
 
-  it('17. disconnect then reconnect re-runs the full handshake and does not double-apply prior events', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.simulateLine('EVT ADD_POINT RED 17');
-    expect(h.getState().redScore).toBe(1);
-
-    await h.service.disconnect();
-    expect(h.service.handshakeState).toBe('disconnected');
-
-    h.transport.outbox.length = 0;
-    await handshake(h);
-    expect(h.transport.outbox).toEqual(['INFO', 'CLOCK STOP']);
-    expect(h.getState().redScore).toBe(1); // not replayed / not doubled
-
-    // seq counter reset on reconnect: seq 17 again is not a "gap"
-    h.transport.simulateLine('EVT ADD_POINT RED 17');
-    expect(h.getState().redScore).toBe(2);
-    expect(h.events.logs.some((l) => l.includes('gap'))).toBe(false);
+  it('starts the PING cadence at 1 s', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.advance(PING_INTERVAL_MS * 3);
+    expect(h.transport.outbox.filter((l) => l === 'PING')).toHaveLength(3);
   });
 });
 
-describe('EVT -> scoreboard mapping (§3.1) and CONFIRM (§6)', () => {
-  it('4. EVT ADD_POINT RED 17 increments red by exactly one and writes CONFIRM 17', async () => {
-    const h = createHarness();
-    await handshake(h);
+describe('set substitution', () => {
+  it('records a substitution and re-asserts state when the set serial changes', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.dispatch({ type: 'INPUT', button: 'ADD_POINT', gesture: 'PRESS', src: 'RED', now: 1000 });
     h.transport.outbox.length = 0;
 
-    h.transport.simulateLine('EVT ADD_POINT RED 17');
-    expect(h.getState().redScore).toBe(1);
-    expect(h.getState().greenScore).toBe(0);
-    expect(h.transport.outbox).toEqual(['CONFIRM 17']);
-  });
+    h.transport.simulateLine('HELLO 3.0 0.2.0 RR-0203 0');
 
-  it('5. EVT ADD_POINT GREEN 18 affects green, not red', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.outbox.length = 0;
-
-    h.transport.simulateLine('EVT ADD_POINT GREEN 18');
-    expect(h.getState().greenScore).toBe(1);
-    expect(h.getState().redScore).toBe(0);
-    expect(h.transport.outbox).toEqual(['CONFIRM 18']);
-  });
-
-  it('6. EVT REMOVE_POINT RED decrements and confirms', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.simulateLine('EVT ADD_POINT RED 17');
-    h.transport.outbox.length = 0;
-
-    h.transport.simulateLine('EVT REMOVE_POINT RED 19');
-    expect(h.getState().redScore).toBe(0);
-    expect(h.transport.outbox).toEqual(['CONFIRM 19']);
-  });
-
-  it('7. EVT TOGGLE_TIMER GREEN starts the clock; a second toggle stops it; no CONFIRM either time', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.outbox.length = 0;
-
-    h.transport.simulateLine('EVT TOGGLE_TIMER GREEN 20');
-    expect(h.getState().isRunning).toBe(true);
-    expect(h.transport.outbox).toEqual(['CLOCK RUN']);
-
-    h.transport.simulateLine('EVT TOGGLE_TIMER GREEN 21');
-    expect(h.getState().isRunning).toBe(false);
-    expect(h.transport.outbox).toEqual(['CLOCK RUN', 'CLOCK STOP']);
-  });
-
-  it('8. TIME_UP / TIME_DOWN / PERIOD_UP / PERIOD_DOWN adjust the correct value', async () => {
-    const h = createHarness();
-    await handshake(h);
-
-    h.transport.simulateLine('EVT TIME_UP RED 22');
-    expect(h.getState().periodTimes[0]).toBe(121);
-
-    h.transport.simulateLine('EVT TIME_DOWN RED 23');
-    expect(h.getState().periodTimes[0]).toBe(120);
-
-    h.transport.simulateLine('EVT PERIOD_UP RED 24');
-    expect(h.getState().currentPeriod).toBe(1);
-
-    h.transport.simulateLine('EVT PERIOD_DOWN RED 25');
-    expect(h.getState().currentPeriod).toBe(0);
+    // Match state is fully retained across a change of connected dongle; the
+    // referee re-enters nothing (FS §8.6).
+    expect(h.state.score.RED).toBe(1);
+    expect(h.state.log.some((e) => e.type === 'SET_SUBSTITUTION')).toBe(true);
+    expect(h.transport.outbox).toContain('STATE RED OFF 000000 OFF 000000');
+    expect(h.logs.join()).toMatch(/RR-0147 → RR-0203/);
   });
 });
 
-describe('outbound clock messages (§4, §5)', () => {
-  it('9. starting the timer writes CLOCK RUN, stopping writes CLOCK STOP — exactly one line per transition, no per-second traffic', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.outbox.length = 0;
+describe('EVT handling', () => {
+  it('applies a press through the match reducer and acknowledges it', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 17');
 
-    h.dispatch({ type: 'TOGGLE_TIMER' });
-    expect(h.transport.outbox).toEqual(['CLOCK RUN']);
-
-    // Simulate several clock ticks while running: no per-second wire traffic.
-    h.dispatch({ type: 'TICK', deltaSeconds: 1 });
-    h.dispatch({ type: 'TICK', deltaSeconds: 1 });
-    h.dispatch({ type: 'TICK', deltaSeconds: 1 });
-    expect(h.transport.outbox).toEqual(['CLOCK RUN']);
-
-    h.dispatch({ type: 'TOGGLE_TIMER' });
-    expect(h.transport.outbox).toEqual(['CLOCK RUN', 'CLOCK STOP']);
+    expect(h.state.score.RED).toBe(1);
+    expect(h.transport.outbox).toContain('ACK 17');
   });
 
-  it('10. period reaching zero writes EXPIRE', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.outbox.length = 0;
+  it('acknowledges an inert button SILENT and changes nothing', async () => {
+    // NFHS leaves F1 inert. Fully inert: no action, no haptic, no indicator.
+    const h = harness({ rulesetId: 'nfhs' });
+    await h.connectAndHandshake();
+    const before = h.state;
+    h.transport.simulateLine('EVT F1 PRESS RED 5');
 
-    h.dispatch({ type: 'TOGGLE_TIMER' }); // CLOCK RUN
-    h.dispatch({ type: 'TICK', deltaSeconds: 120 }); // exhausts the 120s period
-    expect(h.getState().periodTimes[0]).toBe(0);
-    expect(h.transport.outbox).toEqual(['CLOCK RUN', 'CLOCK STOP', 'EXPIRE']);
-  });
-});
-
-describe('sequence-gap detection (§3.1)', () => {
-  it('11. a sequence gap logs a warning and the event is still applied', async () => {
-    const h = createHarness();
-    await handshake(h);
-
-    h.transport.simulateLine('EVT ADD_POINT RED 17');
-    h.transport.simulateLine('EVT ADD_POINT RED 19');
-
-    expect(h.getState().redScore).toBe(2);
-    expect(h.events.logs.some((l) => l.includes('gap') && l.includes('19'))).toBe(true);
+    expect(h.state).toBe(before);
+    expect(h.transport.outbox).toContain('ACK 5 SILENT');
   });
 
-  it('12. sequence wrap 998 -> 999 -> 0 does not log a spurious gap warning', async () => {
-    const h = createHarness();
-    await handshake(h);
+  it('drops a duplicate seq but still acknowledges it', async () => {
+    // Applying a duplicate corrupts the score with no external indication.
+    // Withholding the tap would make the referee press a third time.
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 17');
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 17');
 
-    h.transport.simulateLine('EVT ADD_POINT RED 998');
-    h.transport.simulateLine('EVT ADD_POINT RED 999');
-    h.transport.simulateLine('EVT ADD_POINT RED 0');
-
-    expect(h.getState().redScore).toBe(3);
-    expect(h.events.logs.some((l) => l.includes('gap'))).toBe(false);
-  });
-});
-
-describe('LINK handling (§3.2)', () => {
-  it('13. LINK RED CONNECTED updates state/rssi/batt; DISCONNECTED clears them', async () => {
-    const h = createHarness();
-    await handshake(h);
-
-    h.transport.simulateLine('LINK RED CONNECTED -52 87');
-    expect(h.service.linkStatus.RED).toEqual({ state: 'CONNECTED', rssi: -52, batt: 87 });
-
-    h.transport.simulateLine('LINK RED DISCONNECTED');
-    expect(h.service.linkStatus.RED).toEqual({ state: 'DISCONNECTED', rssi: null, batt: null });
-  });
-});
-
-describe('link supervision (§5.1)', () => {
-  it('14. 5s with no inbound line marks the link stale; a subsequent line clears it', async () => {
-    const h = createHarness();
-    await handshake(h);
-
-    expect(h.service.isStale).toBe(false);
-    vi.advanceTimersByTime(LINK_STALE_MS);
-    expect(h.service.isStale).toBe(true);
-    expect(h.events.staleChanges.at(-1)).toBe(true);
-
-    h.transport.simulateLine('PONG');
-    expect(h.service.isStale).toBe(false);
-    expect(h.events.staleChanges.at(-1)).toBe(false);
+    expect(h.state.score.RED).toBe(1);
+    expect(h.transport.outbox.filter((l) => l === 'ACK 17')).toHaveLength(2);
+    expect(h.service.counters.duplicates).toBe(1);
   });
 
-  it('15. PING is written every 2s while idle', async () => {
-    const h = createHarness();
-    await handshake(h);
-    h.transport.outbox.length = 0;
+  it('counts a sequence gap', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 10');
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 13');
 
-    vi.advanceTimersByTime(PING_INTERVAL_MS * 3);
-    expect(h.transport.outbox).toEqual(['PING', 'PING', 'PING']);
+    // 11 and 12 never arrived: two missing, not three.
+    expect(h.service.counters.seqGaps).toBe(1);
+    expect(h.logs.join()).toMatch(/expected 11, got 13 \(2 missing\)/);
+  });
+
+  it('treats a wrapped counter as a wrap, not a gap of 65000 presses', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 65535');
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 0');
+    expect(h.service.counters.seqGaps).toBe(0);
+  });
+
+  it('carries the gesture through to the reducer', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT TOGGLE_CLOCK PRESS RED 1');
+    expect(h.state.clock.running).toBe(true);
+    h.transport.simulateLine('EVT TOGGLE_CLOCK HOLD RED 2');
+    expect(h.state.clock.running).toBe(false);
+  });
+
+  it('records acknowledgement latency', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT ADD_POINT PRESS RED 1');
+    expect(h.service.counters.ackLatencyP99Ms).not.toBeNull();
   });
 });
 
-describe('raw command sending (§7.2, §7.3)', () => {
-  it('sends a line verbatim once connected, and records it in the debug log', async () => {
-    const h = createHarness();
-    await handshake(h);
+describe('indicator assertion', () => {
+  it('asserts state when a remote JOINs, unconditionally', async () => {
+    // Not "if something changed" — a newly-arrived remote's idea of its own
+    // indicators is "off", and the app's cached idea of it may be "solid".
+    const h = harness();
+    await h.connectAndHandshake();
     h.transport.outbox.length = 0;
 
-    expect(h.service.sendRaw('TEST 1')).toBe(true);
-    expect(h.transport.outbox).toEqual(['TEST 1']);
-    expect(h.service.debugLog.at(-1)).toMatchObject({ dir: 'TX', line: 'TEST 1' });
+    h.transport.simulateLine('JOIN RED');
+    expect(h.transport.outbox).toContain('STATE RED OFF 000000 OFF 000000');
   });
 
-  it('trims surrounding whitespace and ignores an empty command', async () => {
-    const h = createHarness();
-    await handshake(h);
+  it('reflects secondary-clock ownership', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1');
     h.transport.outbox.length = 0;
+    h.service.assertIndicators({ force: true });
 
-    expect(h.service.sendRaw('  TEST 0  ')).toBe(true);
-    expect(h.service.sendRaw('   ')).toBe(false);
-    expect(h.transport.outbox).toEqual(['TEST 0']);
+    expect(h.transport.outbox).toContain('STATE RED SOLID 00A0FF OFF 000000');
+    expect(h.transport.outbox).toContain('STATE GREEN OFF 000000 OFF 000000');
   });
 
-  it('refuses to send while disconnected rather than throwing at the transport', () => {
-    const h = createHarness();
-    expect(h.service.sendRaw('TEST 1')).toBe(false);
+  it('sends nothing when nothing changed', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.service.assertIndicators();
+    h.transport.outbox.length = 0;
+    h.service.assertIndicators();
     expect(h.transport.outbox).toEqual([]);
   });
 
-  it('passes malformed lines through unaltered — that is how the firmware §2.2 path gets exercised', async () => {
-    const h = createHarness();
-    await handshake(h);
+  it('renders a counter binary — off at zero, solid when non-zero', async () => {
+    const h = harness({ rulesetId: 'ibjjf' });
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F2 PRESS GREEN 1');
     h.transport.outbox.length = 0;
-
-    h.service.sendRaw('BOGUS FOO BAR');
-    expect(h.transport.outbox).toEqual(['BOGUS FOO BAR']);
+    h.service.assertIndicators({ force: true });
+    expect(h.transport.outbox).toContain('STATE GREEN OFF 000000 SOLID F5A300');
   });
 });
 
-describe('malformed input (§2.2)', () => {
-  it('16. malformed lines are ignored without crashing, and a valid line right after is still processed', async () => {
-    const h = createHarness();
-    await handshake(h);
+describe('heartbeat', () => {
+  it('beats on the owning remote only, once per second, while accruing', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1'); // assign riding time to red
+    h.transport.simulateLine('EVT TOGGLE_CLOCK PRESS RED 2'); // start the main clock
+    h.transport.outbox.length = 0;
 
-    expect(() => h.transport.simulateLine('BOGUS FOO')).not.toThrow();
-    expect(() => h.transport.simulateLine('EVT ADD_POINT')).not.toThrow();
-    expect(() => h.transport.simulateLine('EVT ADD_POINT RED xyz')).not.toThrow();
+    // Past the burst-suppression window, then three beats.
+    h.advance(BEAT_SUPPRESSION_MS + HEARTBEAT_INTERVAL_MS * 3);
+    const beats = h.transport.outbox.filter((l) => l.startsWith('HAP'));
+    expect(beats.every((l) => l === 'HAP RED BEAT')).toBe(true);
+    expect(beats.length).toBeGreaterThanOrEqual(2);
+  });
 
-    expect(h.getState().redScore).toBe(0);
-    expect(h.events.logs.some((l) => l.includes('malformed'))).toBe(true);
+  it('does not beat while the main clock is stopped, even with an owner', async () => {
+    // Ownership is retained across the pause; the beat is what carries the
+    // running/paused distinction, not the LED.
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1');
+    h.transport.outbox.length = 0;
 
+    h.advance(HEARTBEAT_INTERVAL_MS * 3);
+    expect(h.transport.outbox.filter((l) => l.includes('BEAT'))).toEqual([]);
+  });
+
+  it('suppresses the beat during an input burst', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1');
+    h.transport.simulateLine('EVT TOGGLE_CLOCK PRESS RED 2');
+    h.advance(HEARTBEAT_INTERVAL_MS * 2);
+    h.transport.outbox.length = 0;
+
+    // A scoring burst spanning a beat tick. The referee counts acknowledgement
+    // taps by feel, and a heartbeat inside the burst is what would be
+    // miscounted into a wrong near fall.
+    for (let i = 0; i < 8; i += 1) {
+      h.transport.simulateLine(`EVT ADD_POINT PRESS RED ${10 + i}`);
+      h.advance(150);
+    }
+
+    expect(h.transport.outbox.filter((l) => l.includes('BEAT'))).toEqual([]);
+    expect(h.service.counters.beatsSuppressed).toBeGreaterThan(0);
+  });
+
+  it('resumes the beat under sustained input rather than going silent forever', async () => {
+    // A hold-repeat at 150 ms must not be able to silence the beat: a missing
+    // beat reads as "accrual stopped", and that is a lie the referee cannot
+    // detect.
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1');
+    h.transport.simulateLine('EVT TOGGLE_CLOCK PRESS RED 2');
+    h.advance(HEARTBEAT_INTERVAL_MS * 2);
+    h.transport.outbox.length = 0;
+
+    let seq = 100;
+    for (let elapsed = 0; elapsed < BEAT_SUPPRESSION_MAX_MS + HEARTBEAT_INTERVAL_MS * 2; elapsed += 150) {
+      h.transport.simulateLine(`EVT FORWARD HOLD_REP RED ${(seq += 1)}`);
+      h.advance(150);
+    }
+
+    expect(h.transport.outbox.filter((l) => l.includes('BEAT')).length).toBeGreaterThan(0);
+  });
+});
+
+describe('notifications', () => {
+  it('maps reducer notifications to waveforms and reports what it sent', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.outbox.length = 0;
+
+    const sent = h.service.sendNotifications([
+      { id: 1, kind: NOTIFY.MAIN_WARNING },
+      { id: 2, kind: NOTIFY.PERIOD_EXPIRED },
+      { id: 3, kind: NOTIFY.SECONDARY_EXPIRED },
+      { id: 4, kind: NOTIFY.PHASE_ENTERED },
+    ]);
+
+    expect(h.transport.outbox).toEqual(['HAP BOTH WARN', 'HAP BOTH LONG', 'HAP BOTH BUZZ', 'HAP BOTH DOUBLE']);
+    expect(sent).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('supervision', () => {
+  it('marks the link stale after 2.5 s of silence', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    expect(h.service.isStale).toBe(false);
+    h.advance(LINK_STALE_MS + 50);
+    expect(h.service.isStale).toBe(true);
+  });
+
+  it('clears staleness on any received line', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.advance(LINK_STALE_MS + 50);
+    h.transport.simulateLine('PONG');
+    expect(h.service.isStale).toBe(false);
+  });
+
+  it('stops every timer on disconnect', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    await h.service.disconnect();
+    h.transport.outbox.length = 0;
+    h.advance(PING_INTERVAL_MS * 5);
+    expect(h.transport.outbox).toEqual([]);
+  });
+
+  it('reports both remotes disconnected on transport loss', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('LINK RED CONNECTED -50 90');
+    expect(h.service.linkStatus.RED.state).toBe('CONNECTED');
+
+    h.transport.simulateDisconnect();
+    expect(h.service.linkStatus.RED.state).toBe('DISCONNECTED');
+    expect(h.service.linkStatus.GREEN.state).toBe('DISCONNECTED');
+    expect(h.service.handshakeState).toBe('disconnected');
+  });
+});
+
+describe('reconnect', () => {
+  it('re-runs the handshake from scratch and re-asserts indicator state', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    h.transport.simulateLine('EVT F1 PRESS RED 1');
+
+    h.transport.simulateDisconnect();
+    await h.service.connect();
+    h.transport.outbox.length = 0;
+    h.transport.simulateLine(HELLO);
+
+    // "From scratch" on the wire is not "from scratch" for the match: the
+    // indicator lines carry the state the reducer still holds.
+    expect(h.transport.outbox).toContain('STATE RED SOLID 00A0FF OFF 000000');
+  });
+
+  it('does not leak a second PING cadence across ten reconnects', async () => {
+    const h = harness();
+    for (let i = 0; i < 10; i += 1) {
+      await h.service.connect();
+      h.transport.simulateLine(HELLO);
+      h.transport.simulateDisconnect();
+    }
+    await h.service.connect();
+    h.transport.simulateLine(HELLO);
+    h.transport.outbox.length = 0;
+
+    h.advance(PING_INTERVAL_MS);
+    expect(h.transport.outbox.filter((l) => l === 'PING')).toHaveLength(1);
+  });
+});
+
+describe('malformed input', () => {
+  it('ignores an unknown keyword silently', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    const before = h.logs.length;
+    h.transport.simulateLine('BOGUS THING');
+    expect(h.logs).toHaveLength(before);
+  });
+
+  it('logs a known keyword with bad arguments and applies nothing', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
     h.transport.simulateLine('EVT ADD_POINT RED 17');
-    expect(h.getState().redScore).toBe(1);
+    expect(h.state.score.RED).toBe(0);
+    expect(h.logs.join()).toMatch(/malformed line ignored/);
+  });
+});
+
+describe('raw send', () => {
+  it('refuses to send while disconnected', () => {
+    const h = harness();
+    expect(h.service.sendRaw('TEST 1')).toBe(false);
+  });
+
+  it('sends verbatim once ready', async () => {
+    const h = harness();
+    await h.connectAndHandshake();
+    expect(h.service.sendRaw('  TEST 4  ')).toBe(true);
+    expect(h.transport.outbox).toContain('TEST 4');
   });
 });

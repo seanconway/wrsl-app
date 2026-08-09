@@ -1,0 +1,36 @@
+:root{
+/* Paper (default) surface aliases */
+--surface-page:var(--paper);
+--surface-card:var(--paper-raised);
+--surface-sunken:var(--paper-sunken);
+--surface-inverse:var(--ink-900);
+--border-hairline:var(--alpha-hairline-light);
+--border-strong:var(--ink-200);
+--text-strong:var(--ink-900);
+--text-body:var(--ink-700);
+--text-muted:var(--ink-400);
+--text-inverse:var(--ink-50);
+--text-link:var(--lime-700);
+--accent:var(--lime-500);
+--accent-ink:var(--ink-900);
+--focus-ring:var(--glow-focus);
+}
+
+/* Matside surface. Apply .rr-mat (or data-surface="mat") to any subtree that will be
+   read from across a gym: scoreboards, the referee handset, mat-side kiosks. */
+.rr-mat{
+--surface-page:var(--ink-950);
+--surface-card:var(--ink-850);
+--surface-sunken:var(--ink-900);
+--surface-inverse:var(--paper);
+--border-hairline:var(--alpha-hairline-dark);
+--border-strong:var(--ink-600);
+--text-strong:#FFFFFF;
+--text-body:var(--ink-100);
+--text-muted:var(--ink-400);
+--text-inverse:var(--ink-900);
+--text-link:var(--lime-400);
+--accent:var(--lime-500);
+--accent-ink:var(--ink-950);
+color-scheme:dark;
+}

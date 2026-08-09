@@ -1,0 +1,53 @@
+<!-- @dsCard group="Mat Display" viewport="1280x720" name="Matside scoreboard" subtitle="The display athletes, coaches and spectators read. Drive it from the remote strip below." -->
+<!doctype html><html><head><meta charset="utf-8"><title>RefRemote · Mat Display</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>html,body{margin:0;background:var(--ink-950)}#root{width:1280px}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head>
+<body><div id="root"></div>
+<script type="text/babel" src="MatDisplay.jsx"></script>
+<script type="text/babel" src="RefStrip.jsx"></script>
+<script type="text/babel">
+const START = {
+  mat: 3, division: 'Adult blue · −76kg', ruleset: 'IBJJF 2025', round: 'Round of 16',
+  matchId: 'R-1183', seconds: 272, running: true, flash: null, result: null,
+  next: 'Aoki, K.  vs  Ferreira, L.',
+  red:   { name: 'Silva, Maria', team: 'Alliance São Paulo', points: 4, adv: 1, pen: 1 },
+  green: { name: 'Vandenberghe, J.', team: 'Gracie Barra Antwerp', points: 7, adv: 0, pen: 0 },
+};
+
+function App() {
+  const [m, setM] = React.useState(START);
+  React.useEffect(() => {
+    if (!m.running || m.result) return;
+    const t = setInterval(() => setM((p) => ({ ...p, seconds: Math.max(0, p.seconds - 1) })), 1000);
+    return () => clearInterval(t);
+  }, [m.running, m.result]);
+  React.useEffect(() => {
+    if (!m.flash) return;
+    const t = setTimeout(() => setM((p) => ({ ...p, flash: null })), 140);
+    return () => clearTimeout(t);
+  }, [m.flash]);
+
+  const act = (kind, corner, n) => setM((p) => {
+    const a = { ...p[corner] };
+    if (kind === 'point') a.points += n;
+    if (kind === 'adv') a.adv += 1;
+    if (kind === 'pen') a.pen += 1;
+    if (kind === 'undo') a.points = Math.max(0, a.points - 1);
+    if (kind === 'toggle') return { ...p, running: !p.running };
+    if (kind === 'reset') return { ...START };
+    if (kind === 'finish') {
+      const w = p.red.points >= p.green.points ? p.red : p.green;
+      return { ...p, running: false, result: { winner: w.name.split(',')[0], method: 'Points', score: `${p.red.points}–${p.green.points}` } };
+    }
+    return { ...p, [corner]: a, flash: corner };
+  });
+
+  return (<div><MatDisplay m={m} /><RefStrip m={m} act={act} /></div>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>

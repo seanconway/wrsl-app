@@ -1,0 +1,76 @@
+<!-- @dsCard group="Console" viewport="1440x900" name="Tournament console" subtitle="Head-table operations: mats, brackets, athletes and device health." -->
+<!-- @startingPoint section="Console" subtitle="Full tournament console shell with mat overview" viewport="1440x900" -->
+<!doctype html><html><head><meta charset="utf-8"><title>RefRemote · Console</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>html,body{margin:0;background:var(--paper)}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head>
+<body><div id="root"></div>
+<script type="text/babel" src="Shell.jsx"></script>
+<script type="text/babel" src="MatsView.jsx"></script>
+<script type="text/babel" src="BracketsView.jsx"></script>
+<script type="text/babel" src="DevicesView.jsx"></script>
+<script type="text/babel" src="AthletesView.jsx"></script>
+<script type="text/babel">
+const { Button, Dialog, Badge, MatchClock, NamePlate, ScoreTile, IconButton } = window.RefRemoteDesignSystem_6d7f39;
+
+const HEADS = {
+  mats: { title: 'Mats', eyebrow: 'Nordic Open 2026 · Day 2' },
+  brackets: { title: 'Adult · Blue · −76kg', eyebrow: 'Brackets' },
+  athletes: { title: 'Athletes', eyebrow: '1 284 registered' },
+  devices: { title: 'Devices', eyebrow: '12 paired · 1 offline' },
+  settings: { title: 'Settings', eyebrow: 'Event' },
+};
+
+function MatDrawer({ mat, onClose }) {
+  return (
+    <Dialog width={520} eyebrow={`Mat ${mat.mat} · ${mat.division}`} title="Live match" onClose={onClose}
+      footer={<><Button variant="ghost" size="sm" onClick={onClose}>Close</Button><Button variant="secondary" size="sm" iconLeft="monitor">Open display</Button><Button size="sm" iconLeft="list">Manage queue</Button></>}>
+      <div className="rr-mat" style={{ display: 'flex', alignItems: 'center', gap: 18, background: 'var(--ink-950)', padding: 18, marginBottom: 14 }}>
+        <ScoreTile corner="red" points={mat.red ? mat.red.points : 0} size="sm" style={{ background: 'var(--ink-850)' }} />
+        <MatchClock seconds={151} running={mat.status === 'live'} size="md" style={{ margin: '0 auto' }} />
+        <ScoreTile corner="green" points={mat.green ? mat.green.points : 0} size="sm" style={{ background: 'var(--ink-850)' }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <NamePlate corner="red" name={mat.red ? mat.red.name : '—'} size="sm" />
+        <NamePlate corner="green" name={mat.green ? mat.green.name : '—'} size="sm" />
+      </div>
+    </Dialog>
+  );
+}
+
+function Placeholder({ what }) {
+  return (
+    <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 'var(--r-3)', padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 600, color: 'var(--text-strong)' }}>{what} is not defined in the source material.</div>
+      <div style={{ fontSize: 13, marginTop: 6 }}>Left blank on purpose — this kit recreates only what the brief described.</div>
+    </div>
+  );
+}
+
+function App() {
+  const [view, setView] = React.useState('mats');
+  const [q, setQ] = React.useState('');
+  const [open, setOpen] = React.useState(null);
+  const h = HEADS[view];
+  const actions = view === 'mats'
+    ? <><Button variant="secondary" size="sm" iconLeft="monitor">Display wall</Button><Button size="sm" iconLeft="plus">Assign match</Button></>
+    : <Button variant="secondary" size="sm" iconLeft="printer">Print</Button>;
+  return (
+    <div style={{ position: 'relative' }}>
+      <ConsoleShell view={view} onView={setView} title={h.title} eyebrow={h.eyebrow} actions={actions} search={q} onSearch={setQ}>
+        {view === 'mats' && <MatsView onOpen={setOpen} />}
+        {view === 'brackets' && <BracketsView />}
+        {view === 'athletes' && <AthletesView />}
+        {view === 'devices' && <DevicesView />}
+        {view === 'settings' && <Placeholder what="Event settings" />}
+      </ConsoleShell>
+      {open && <MatDrawer mat={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>

@@ -1,0 +1,7 @@
+/* RefRemote webfonts.
+   Saira — UI, display, scoreboard numerals (variable weight 100-900, plus Saira Condensed for name plates).
+   JetBrains Mono — clocks, IDs, telemetry, code.
+   SUBSTITUTION NOTE: no font binaries were supplied with the brief, so both families
+   are loaded from Google Fonts. Drop real .woff2 files into assets/fonts/ and replace
+   this @import with local @font-face rules if licensed files become available. */
+@import url("https://fonts.googleapis.com/css2?family=Saira:ital,wght@0,100..900;1,100..900&family=Saira+Condensed:wght@400;500;600;700;800;900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap");

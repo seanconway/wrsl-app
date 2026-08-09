@@ -8,7 +8,14 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Scoreboard</title>
+    <!-- Declares that this page supplies its own dark palette. Without it,
+         Chrome's auto-dark-mode repaints the scoreboard: observed on a stock
+         profile flattening every surface to rgb(24,26,27) and every colour to
+         one off-white, which takes the athlete red and green with it. Those two
+         are fixed by the ruleset and identify the corners, so a browser
+         deciding to adjust them is a correctness problem, not a taste one. -->
+    <meta name="color-scheme" content="dark" />
+    <title>RefRemote Scoreboard</title>
   </head>
   <body>
     <div id="root"></div>

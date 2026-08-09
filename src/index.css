@@ -1,3 +1,72 @@
+/* The design system is the source of truth for every token, and it is imported
+   whole rather than cherry-picked, so a token added upstream is available here
+   without a second edit.
+
+   FONT NOTE. tokens/fonts.css pulls Saira and JetBrains Mono from Google Fonts
+   — the design system's own documented substitution. That is a network fetch,
+   and this application must run a complete match with the venue's network
+   absent (SCOPE.md §7.3). It is survivable because the operator loads the
+   application at least once with connectivity before the event (SCOPE.md §8.1),
+   which caches the fonts with everything else, and because every family falls
+   back to a system face. Self-hosted .woff2 files under design-system/assets/
+   would remove the dependency; that is the correct fix when licensed binaries
+   exist. */
+@import '../design-system/styles.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Paired with <meta name="color-scheme" content="dark"> in index.html. The
+   design system sets this on .rr-mat, but that class sits inside #root, and the
+   browser decides whether to auto-invert before it gets there. */
+:root {
+  color-scheme: dark;
+}
+
+/* The scoreboard is a matside surface end to end: near-black, no shadows, huge
+   tabular numerals, fixed and full-bleed. Nothing scrolls and nothing reflows —
+   a scoreboard that moves under a referee glancing up is a scoreboard that
+   costs them a second they do not have.
+
+   The design system's default surface is paper, and `body` picks that up before
+   any React tree exists. Painting it here means no white flash on load and no
+   paper-coloured edge if the tree ever fails to fill the viewport. */
+html,
+body,
+#root {
+  background: var(--ink-950);
+}
+
+.rr-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Score changes cross-fade while the tile flashes lime at 12%. The number
+   itself never slides or counts up: an overshooting score animation looks like
+   a mis-registered press. */
+@keyframes rr-score-flash {
+  from {
+    background-color: color-mix(in oklab, var(--lime-500) 12%, var(--surface-card));
+  }
+  to {
+    background-color: var(--surface-card);
+  }
+}
+
+.rr-flash {
+  animation: rr-score-flash var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rr-flash {
+    animation: none;
+  }
+}
