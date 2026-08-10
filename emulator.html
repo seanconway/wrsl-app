@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Same reasoning as index.html: without this, Chrome's auto-dark-mode
+         repaints the page on a stock profile, and the athlete red and green
+         are how you tell which remote a haptic landed on. -->
+    <meta name="color-scheme" content="dark" />
+    <!-- Dev-only bench instrument. Vite builds only index.html unless this file
+         is added to rollupOptions.input, so it never reaches dist/. -->
+    <title>RefRemote Dongle Emulator</title>
+  </head>
+  <!-- .rr-mat selects the design system's matside token set: near-black
+       surfaces, so an unlit LED and a low-amplitude beat are both legible. -->
+  <body class="rr-mat">
+    <div id="root"></div>
+    <script type="module" src="/src/emulator/main.jsx"></script>
+  </body>
+</html>

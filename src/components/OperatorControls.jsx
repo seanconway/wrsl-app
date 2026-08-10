@@ -1,10 +1,8 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
 import { selectRuleset, isInertInput } from '../match/matchReducer.js';
 import { monotonicNow } from '../match/clock.js';
-
-const HOLD_MS = 600;
-const HOLD_REPEAT_MS = 150;
+import { useGestureHandlers } from './useGesture.js';
 
 /**
  * A software stand-in for the two remotes.
@@ -14,10 +12,9 @@ const HOLD_REPEAT_MS = 150;
  * shortcut that bypasses what a referee can do, because a second path into
  * match state is a second thing that can be wrong.
  *
- * It also reproduces the gesture timing, which lives in remote firmware
- * (FS §4.2) and is a firmware constant there. The values below are that
- * firmware's defaults, restated so the operator surface feels the same. They
- * are NOT configuration and must not become configuration.
+ * The gesture timing comes from useGesture.js, shared with the emulator's
+ * remote mockups so there is one definition of what a press, a hold and a
+ * hold-repeat are.
  */
 export default function OperatorControls({ state, dispatch, disabled }) {
   const ruleset = selectRuleset(state);
@@ -113,48 +110,14 @@ function FunctionButton({ slot, ruleset, state, corner, send, disabled }) {
   );
 }
 
-/**
- * Press / hold / hold-repeat, discriminated on pointer events. A hold fires
- * once at the threshold — while the finger is still down, not on release —
- * because the referee's feedback has to arrive during the press.
- */
 function PadButton({ label, icon, onPress, disabled, repeats = false, datum = false }) {
-  const holdTimer = useRef(null);
-  const repeatTimer = useRef(null);
-  const held = useRef(false);
-
-  const clear = () => {
-    clearTimeout(holdTimer.current);
-    clearInterval(repeatTimer.current);
-    holdTimer.current = null;
-    repeatTimer.current = null;
-  };
-
-  const down = () => {
-    if (disabled) return;
-    held.current = false;
-    holdTimer.current = setTimeout(() => {
-      held.current = true;
-      onPress('HOLD');
-      if (repeats) repeatTimer.current = setInterval(() => onPress('HOLD_REP'), HOLD_REPEAT_MS);
-    }, HOLD_MS);
-  };
-
-  const up = () => {
-    if (disabled) return;
-    clear();
-    if (!held.current) onPress('PRESS');
-    held.current = false;
-  };
+  const gesture = useGestureHandlers({ onPress, repeats, disabled });
 
   return (
     <button
       type="button"
       disabled={disabled}
-      onPointerDown={down}
-      onPointerUp={up}
-      onPointerLeave={clear}
-      onPointerCancel={clear}
+      {...gesture}
       style={{
         // 64px minimum for anything pressed during a live match.
         minHeight: 'var(--touch-glove)',

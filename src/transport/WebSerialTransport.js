@@ -16,6 +16,17 @@ import { createLineAssembler } from '../protocol/protocol.js';
  */
 export const DONGLE_FILTERS = [{ usbVendorId: 0x2fe3, usbProductId: 0x0004 }];
 
+/**
+ * An empty filter list means "show every port", but passing `filters: []`
+ * literally is ambiguous — it reads equally as "match nothing", and browsers
+ * have not been consistent about which they mean. Calling requestPort() with
+ * no argument at all is the spec-guaranteed way to say "show everything", so
+ * an empty list is translated into that rather than forwarded.
+ */
+function pickerOptions(filters) {
+  return filters?.length ? { filters } : undefined;
+}
+
 // The transport interface every dongle transport implements:
 //
 //   connect({ port } = {})        -> Promise<void>   establishes the link
@@ -57,17 +68,25 @@ export class WebSerialTransport {
     return navigator.serial.getPorts();
   }
 
-  /** Prompts the user to pick a port (first-time grant only). */
-  static async requestPort() {
-    return navigator.serial.requestPort({ filters: DONGLE_FILTERS });
+  /**
+   * Prompts the user to pick a port (first-time grant only).
+   *
+   * `filters` is overridable for one reason only: the dongle emulator opens the
+   * far end of a virtual serial pair, which is not a dongle and matches no
+   * dongle identity. Passing `[]` shows every port. The application itself must
+   * never do this — narrowing the picker is what stops an operator selecting
+   * the wrong device — so the default stands for all production paths.
+   */
+  static async requestPort({ filters = DONGLE_FILTERS } = {}) {
+    return navigator.serial.requestPort(pickerOptions(filters));
   }
 
-  async connect({ port } = {}) {
+  async connect({ port, filters = DONGLE_FILTERS } = {}) {
     if (!WebSerialTransport.isSupported()) {
       throw new Error('Web Serial API is not available in this browser.');
     }
 
-    this.port = port ?? (await navigator.serial.requestPort({ filters: DONGLE_FILTERS }));
+    this.port = port ?? (await navigator.serial.requestPort(pickerOptions(filters)));
     await this.port.open({ baudRate: this.baudRate, dataBits: 8, parity: 'none', stopBits: 1 });
     this.port.addEventListener('disconnect', this._handleHardwareDisconnect);
 

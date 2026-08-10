@@ -70,6 +70,9 @@ src/
                              Transport-agnostic.
   match/                     ruleset config, match state, the clocks of record
   components/                UI, built from the design system
+  emulator/                  dev-only: the dongle half of the protocol, plus an
+                             interactive mockup of both remotes. Excluded from
+                             the production build
 ```
 
 Match state lives in a plain reducer shared by the UI and the dongle service, so neither reimplements the other's logic. The serial transport sits behind a thin abstraction on purpose: a desktop-packaged build — which would remove the dependence on browser serial-access policy — should stay an inexpensive future option.
@@ -100,7 +103,7 @@ npm test
 
 ### Running without hardware
 
-Two suites, one command, no hardware and no browser:
+Four suites, one command, no hardware and no browser:
 
 ```bash
 npm test
@@ -108,20 +111,45 @@ npm test
 
 - `src/protocol/protocol.test.js` — parser and encoder tests, including every case in PROTOCOL.md §14 and round-trips for every message type.
 - `src/dongle/DongleService.test.js` — integration tests against `FakeDongleTransport` with fake timers: handshake, version guard, event dispatch, acknowledgement, sequence gaps and duplicates, indicator assertion on `JOIN`, link supervision, malformed input, and reconnect.
+- `src/match/matchReducer.test.js` — the officiating logic.
+- `src/emulator/dongleModel.test.js` — the same §14 contract asserted from the **dongle's** side of the wire, so both ends of the protocol are tested against one specification.
 
-### Rehearsing against real Web Serial
+### The dongle emulator
 
-`tools/fake_dongle.js` plays the dongle side of the link over a real (virtual) serial port, so the application can be exercised against actual Web Serial before firmware exists. It is a manual tool, not part of the automated suite.
+The emulator runs the dongle half of the protocol over a real serial link and adds an interactive mockup of **both remotes** — pressable buttons with the firmware's gesture timing, LEDs rendering `STATE`, and a haptic motor that shows waveform and amplitude. The scoreboard connects through its ordinary Web Serial path and cannot tell it from firmware.
 
-1. Create a virtual serial port pair:
-   - **macOS/Linux:** `socat -d -d pty,raw,echo=0 pty,raw,echo=0`
-   - **Windows:** [com0com](https://com0com.sourceforge.net/), e.g. `COM5` ↔ `COM6`
-2. `node tools/fake_dongle.js /dev/ttys004`
-3. Connect the app to the other end of the pair.
+This is how the application is validated before firmware exists. It makes observable the two things a real dongle's single LED never can: **which** remote a haptic landed on (acknowledgement routing, §10.4) and **how strong** it was relative to the others (the beat/tap separation of FS §11.1). What it cannot tell you is how a real ERM feels on a wrist — that stays a hardware question.
+
+**Prerequisite: a virtual serial port pair.**
+
+- **Windows:** [Free Virtual Serial Ports](https://freevirtualserialports.com/) (HHD Software) — create a *local bridge* pair, e.g. `COM1` ↔ `COM2`. User-mode and GlobalSign-signed, so it installs with Secure Boot on and needs no driver-signing workaround.
+
+  **Not com0com.** Its driver is unmaintained since 2017 and its signature is no longer trusted: on current Windows it installs but the bus device fails with **Code 52** (`CM_PROB_UNSIGNED_DRIVER`) and no ports appear. The only way to make it load is to enable test signing mode and reboot, which is not worth it for a bench tool.
+
+- **macOS/Linux:** `socat -d -d pty,raw,echo=0 pty,raw,echo=0`
+
+**Pick port names clear of your real hardware.** A J-Link (the nRF52840 DK) takes two CDC UART ports of its own, and each dongle takes another — collisions here are confusing rather than loud, because the picker just shows the wrong device.
+
+Then:
+
+1. `npm run dev`
+2. Open **`http://localhost:5173/emulator.html`**, click *Open serial port…*, pick one end of the pair.
+3. Open **`http://localhost:5173/?anyport`** in a second window — the `?anyport` query param widens the scoreboard's own port picker to every serial port, not just the dongle's USB identity, which "Connect dongle" otherwise filters to exclusively. Connect to the other end of the pair.
+4. Arrange both windows side by side and **keep them visible.** A hidden tab has its timers clamped to roughly 1 Hz, which stops the heartbeat and trips supervision — the same throttling risk the application itself carries (PLAN.md §7, R1).
+
+**The two halves talk over the serial pair, not over HTTP**, so they need not share an origin. Pointing a deployed scoreboard (`https://…/?anyport`) at a locally-run emulator is the better test of a release, because it exercises the artefact that actually shipped — rungs D1 and D7. Expect to grant serial permission again: grants are per-origin (D6).
+
+`tools/fake_dongle.js` is the headless equivalent for scripted runs and a scrolling wire log:
+
+```bash
+node tools/fake_dongle.js COM1 [--test 2]
+```
+
+Both front-ends drive the same `src/emulator/dongleModel.js`, so they cannot drift apart.
 
 ## Status
 
-Protocol **v3.0** is a breaking revision of the interface, written against the functional specification. This application and the dongle firmware are both being brought up to it. See `PLAN.md` in the firmware repo for the milestone sequence and the validation ladder.
+Protocol **v3.0** is a breaking revision of the interface, written against the functional specification. **This application is at v3.0** — 137 tests passing, lint and production build clean, browser-verified against the fake transport. The dongle firmware is still at v2.0, so the two ends do not interoperate yet: plugging in today's dongle is correctly refused at the app's major-version guard. Closing that is milestone M2. See `PLAN.md` in the firmware repo for full status, completed and planned work, and the validation ladder.
 
 ## Deployment
 
@@ -130,3 +158,4 @@ Static hosting over **real HTTPS** — a secure context is required for Web Seri
 ## License
 
 Not yet determined.
+

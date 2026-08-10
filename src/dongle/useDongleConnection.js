@@ -5,6 +5,21 @@ import { selectIndicators, isInertInput } from '../match/matchReducer.js';
 
 const LOG_UI_LIMIT = 200;
 
+/**
+ * Widens the serial port picker to every port, not just the dongle's USB
+ * identity — off unless the page is loaded with `?anyport` in the URL. No
+ * referee or operator session ever has a reason to type that, so production
+ * behaviour (narrow picker, real dongle only) is unaffected. It exists so the
+ * scoreboard can be pointed at a virtual serial pair — the dongle emulator, or
+ * a bench rehearsal rig — instead of real hardware. See README.md.
+ */
+const ANY_PORT_PARAM = 'anyport';
+
+function anyPortRequested() {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).has(ANY_PORT_PARAM);
+}
+
 const DISCONNECTED_LINK_STATUS = {
   RED: { state: 'DISCONNECTED', rssi: null, batt: null },
   GREEN: { state: 'DISCONNECTED', rssi: null, batt: null },
@@ -86,7 +101,8 @@ export function useDongleConnection(matchState, dispatch) {
       setError(null);
       const service = ensureService();
       try {
-        await service.connect(port ? { port } : undefined);
+        const options = port ? { port } : {};
+        await service.connect(anyPortRequested() ? { ...options, filters: [] } : options);
       } catch (err) {
         setError(describeConnectionError(err));
         throw err;

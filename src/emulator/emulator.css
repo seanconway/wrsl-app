@@ -1,0 +1,40 @@
+/* The emulator borrows the design system for tokens only. It is a bench
+   instrument, not a product surface: unlike the scoreboard it is allowed to
+   scroll and reflow, because nobody is glancing up at it mid-match. */
+@import '../../design-system/styles.css';
+
+/* Paired with <meta name="color-scheme" content="dark"> in emulator.html.
+   Same trap as the scoreboard: on a stock profile Chrome's auto-dark-mode
+   repaints everything before any class inside #root applies, which would take
+   the athlete red and green with it — and here those two colours are how you
+   tell which wrist a haptic landed on. */
+:root {
+  color-scheme: dark;
+}
+
+/* The page runs on the matside surface — .rr-mat on <body>, which the design
+   system offers for exactly this ("scoreboards, the referee handset"), and
+   this page is a mockup of the handset. It is also what the LEDs and the
+   haptic motor need: an unlit indicator and a low-amplitude beat are only
+   legible against a dark ground, and telling a beat from a tap at a glance is
+   the whole reason this page exists.
+
+   html and body are painted directly as well as by the class, so there is no
+   paper-coloured flash before the tokens resolve. */
+html,
+body {
+  background: var(--ink-950);
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--text-body);
+  font-family: var(--font-ui);
+}
+
+@keyframes rr-blink {
+  to {
+    opacity: 0.25;
+  }
+}
