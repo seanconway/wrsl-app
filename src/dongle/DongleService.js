@@ -56,6 +56,7 @@ function initialCounters() {
     beatsSuppressed: 0,
     ackLatencyP99Ms: null,
     ackLatencyMaxMs: null,
+    ackLatenciesMs: [],
     connectedAtWall: null,
   };
 }
@@ -450,7 +451,19 @@ export class DongleService {
   }
 
   /** p99 rather than the median: the median is comfortably inside budget in
-   *  every design that ever fails this requirement (PROTOCOL.md §11). */
+   *  every design that ever fails this requirement (PROTOCOL.md §11).
+   *
+   *  This measures the app's own EVT-received-to-ACK-sent turnaround only —
+   *  a small, synchronous slice of the full press-to-tap round trip, not the
+   *  whole thing (radio transit on both legs happens outside this window and
+   *  leaves no timestamp either side of it can see). It is the app's *share*
+   *  of PROTOCOL.md §11's budget (25 ms of the 120 ms total), which is what
+   *  PLAN.md's B1 (workqueue contention) provocation actually needs: a
+   *  regression here means the app itself is slow, not the radio.
+   *
+   *  `ackLatenciesMs` carries the full rolling sample set (not just p99/max)
+   *  into `exportDiagnostics()` so a real distribution — not two summary
+   *  numbers — survives a bench session for later analysis. */
   _recordAckLatency(ms) {
     this._ackLatencies.push(ms);
     if (this._ackLatencies.length > 500) this._ackLatencies.shift();
@@ -460,6 +473,7 @@ export class DongleService {
       ...this.counters,
       ackLatencyP99Ms: Math.round(sorted[index]),
       ackLatencyMaxMs: Math.round(sorted[sorted.length - 1]),
+      ackLatenciesMs: [...this._ackLatencies],
     };
   }
 
