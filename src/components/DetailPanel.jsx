@@ -291,7 +291,7 @@ function SystemDetail({ state, dongle, onSendRaw }) {
       <Section title="Instrumentation">
         {/* Running counters, not one-off warnings into a ring buffer that will
             have rolled over long before anyone reads it. A soak test without
-            these is unfalsifiable (PLAN.md §8, V8). */}
+            these is unfalsifiable (PLAN.md §5, V8). */}
         <Row label="Events received" value={counters.evtReceived ?? 0} />
         <Row
           label="Sequence gaps"

@@ -8,7 +8,7 @@ import { createLineAssembler } from '../protocol/protocol.js';
  * production for two reasons: users can pick the wrong device, and a site
  * policy allowlisting 0x2fe3 would grant this origin access to ANY Zephyr
  * device the user plugs in — which no IT department will approve, and which
- * blocks the enterprise deployment path entirely (PLAN.md §9, D5).
+ * blocks the enterprise deployment path entirely (PLAN.md §6, D5).
  *
  * Replace with the real VID/PID when one is assigned. Until then the filter is
  * applied anyway, so the picker is narrowed and the failure mode of forgetting
