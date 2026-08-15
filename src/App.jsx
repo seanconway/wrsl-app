@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMatch } from './match/useMatch.js';
 import { useWatchdog } from './match/useWatchdog.js';
 import { useDongleConnection } from './dongle/useDongleConnection.js';
@@ -19,6 +19,28 @@ export default function App() {
   // claim nearly half the display that the mat-visible scoreboard needs.
   const [controlsOpen, setControlsOpen] = useState(false);
   const [fault, setFault] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(
+    typeof document !== 'undefined' && document.fullscreenElement != null,
+  );
+
+  // Tracked via the event rather than the toggle's own onClick, because
+  // fullscreen can also end without it — the operator's Esc key, the browser
+  // chrome, the OS. Either path needs the button's icon and label to catch up.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    // Denial (no user-gesture context, or the platform refuses) is not an
+    // application fault — same rationale as the dongle port picker below.
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }, []);
 
   // The match tick stamps the watchdog, and the watchdog is constructed after
   // the match hook, so the two are joined through a ref rather than by
@@ -169,6 +191,11 @@ export default function App() {
           {state.athletes.RED.name || 'RED'} v {state.athletes.GREEN.name || 'GREEN'}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--sp-4)' }}>
+          <FooterButton
+            icon={isFullscreen ? 'minimize' : 'maximize'}
+            label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            onClick={toggleFullscreen}
+          />
           <FooterButton
             icon="hand"
             label={controlsOpen ? 'Hide controls' : 'Controls'}
