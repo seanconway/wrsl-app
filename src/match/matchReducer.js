@@ -20,6 +20,7 @@ import {
   startAccrual,
   stopAccrual,
   adjustClock,
+  adjustAccrual,
   reanchor,
 } from './clock.js';
 import { ROLE, getRuleset, allPeriods, periodAt, functionSlot, secondaryClockSlot, phaseIndexAt } from './rulesets.js';
@@ -286,9 +287,34 @@ function resetPeriodClock(state, now) {
   return syncAccrual(logEntry(next, { type: 'CLOCK_RESET' }, now), now);
 }
 
+/**
+ * Adjusts the main clock by `deltaMs` and, if the secondary clock is
+ * currently owned, applies the same correction to it — the interval being
+ * corrected is one the secondary clock was also live for (FS §5.1).
+ *
+ * A count-down secondary clock (the activity clock) moves with the main
+ * clock's own sign: winding the match clock back hands time back to the
+ * activity clock too. A count-up accumulator (riding time) moves the
+ * opposite way — winding the match clock back un-happens elapsed time, so it
+ * subtracts from whichever athlete currently owns it, floored at zero.
+ * Unowned is untouched: nothing was accruing during the interval.
+ */
 function adjustMainClock(state, deltaMs, now) {
   const clock = adjustClock(state.clock, deltaMs, now, selectPeriodDuration(state) * 1000);
-  return syncAccrual({ ...state, clock }, now);
+  let next = { ...state, clock };
+
+  const { owner, down } = state.secondary;
+  if (owner !== null) {
+    if (down) {
+      const duration = (selectRuleset(state).secondary_clock.duration_s ?? 30) * 1000;
+      next = { ...next, secondary: { ...next.secondary, down: adjustClock(down, deltaMs, now, duration) } };
+    } else {
+      const adjusted = adjustAccrual(next.secondary.up[owner], -deltaMs, now);
+      next = { ...next, secondary: { ...next.secondary, up: { ...next.secondary.up, [owner]: adjusted } } };
+    }
+  }
+
+  return syncAccrual(next, now);
 }
 
 function changeScore(state, corner, delta, now) {
@@ -433,14 +459,19 @@ function handleInput(state, { button, gesture, src }, now) {
     // two similar navigation functions do not compete for the same finger
     // positions. Both are defaults marked for post-MVP remapping (FS §5.2) —
     // and because the wire carries buttons, remapping is a change here alone.
+    //
+    // The match clock counts down, so FORWARD — advancing through match time
+    // — subtracts from it, and BACKWARD — rewinding — adds to it (FS §5.1).
+    // Period navigation is unaffected: FORWARD/BACKWARD still step later/
+    // earlier through the period list regardless of clock direction.
     case 'FORWARD':
-      if (src === 'RED') return adjustMainClock(state, +CLOCK_ADJUST_MS, now);
+      if (src === 'RED') return adjustMainClock(state, -CLOCK_ADJUST_MS, now);
       if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(state, +1, now);
       if (gesture === 'HOLD') return enterPeriod(state, selectPeriodCount(state) - 1, now);
       return state;
 
     case 'BACKWARD':
-      if (src === 'RED') return adjustMainClock(state, -CLOCK_ADJUST_MS, now);
+      if (src === 'RED') return adjustMainClock(state, +CLOCK_ADJUST_MS, now);
       if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(state, -1, now);
       if (gesture === 'HOLD') return enterPeriod(state, 0, now);
       return state;

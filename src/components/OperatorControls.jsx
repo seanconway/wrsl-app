@@ -59,7 +59,7 @@ function RemotePad({ corner, ruleset, state, send, disabled }) {
         <span />
 
         <PadButton
-          label={corner === 'RED' ? '−1 sec' : 'Prev period'}
+          label={corner === 'RED' ? '+1 sec' : 'Prev period'}
           icon="chevron-down"
           repeats
           onPress={(g) => send('BACKWARD', g, corner)}
@@ -78,7 +78,7 @@ function RemotePad({ corner, ruleset, state, send, disabled }) {
           disabled={disabled}
         />
         <PadButton
-          label={corner === 'RED' ? '+1 sec' : 'Next period'}
+          label={corner === 'RED' ? '−1 sec' : 'Next period'}
           icon="chevron-right"
           repeats
           onPress={(g) => send('FORWARD', g, corner)}

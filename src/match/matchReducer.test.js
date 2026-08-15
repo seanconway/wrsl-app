@@ -93,12 +93,57 @@ describe('the main clock', () => {
   });
 
   it('adjusts by one second and clamps at the period duration', () => {
+    // The clock counts down, so FORWARD (advancing through match time)
+    // subtracts and BACKWARD (rewinding) adds (FS §5.1).
     let s = fresh('ncaa');
-    s = press(s, 'BACKWARD', 'RED', 'PRESS', 1000);
+    s = press(s, 'FORWARD', 'RED', 'PRESS', 1000);
     expect(selectClockMs(s, 1000)).toBe(179_000);
-    s = press(s, 'FORWARD', 'RED', 'PRESS', 1000);
-    s = press(s, 'FORWARD', 'RED', 'PRESS', 1000);
+    s = press(s, 'BACKWARD', 'RED', 'PRESS', 1000);
+    s = press(s, 'BACKWARD', 'RED', 'PRESS', 1000);
     expect(selectClockMs(s, 1000)).toBe(180_000);
+  });
+
+  it('winding the clock back also winds back riding time accrued by the current owner', () => {
+    // The scenario this exists for: the referee is late stopping the clock
+    // and needs to wind it back, which should also un-accrue the riding time
+    // that accumulated during the interval being corrected (FS §5.1).
+    let s = fresh('ncaa');
+    s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
+    s = press(s, 'F1', 'GREEN', 'PRESS', 1000);
+    expect(accruedMs(s.secondary.up.GREEN, 6000)).toBe(5000);
+
+    // BACKWARD rewinds the match clock — and should un-accrue from GREEN,
+    // the current owner, regardless of which corner pressed BACKWARD.
+    s = press(s, 'BACKWARD', 'RED', 'PRESS', 6000);
+    expect(accruedMs(s.secondary.up.GREEN, 6000)).toBe(4000);
+    expect(selectClockMs(s, 6000)).toBe(176_000); // +1s from the rewind, on top of the 5s already elapsed
+
+    // FORWARD re-accrues the correction back onto the owner.
+    s = press(s, 'FORWARD', 'RED', 'PRESS', 6000);
+    expect(accruedMs(s.secondary.up.GREEN, 6000)).toBe(5000);
+  });
+
+  it('does not touch riding time while the secondary clock is unowned', () => {
+    let s = fresh('ncaa');
+    s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
+    s = press(s, 'BACKWARD', 'RED', 'PRESS', 6000);
+    expect(accruedMs(s.secondary.up.RED, 6000)).toBe(0);
+    expect(accruedMs(s.secondary.up.GREEN, 6000)).toBe(0);
+  });
+
+  it('winding the clock back also winds back the freestyle activity clock', () => {
+    let s = fresh('uww-freestyle');
+    s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
+    s = press(s, 'F1', 'RED', 'PRESS', 1000);
+    expect(selectSecondaryRemainingMs(s, 6000)).toBe(25_000);
+
+    // BACKWARD rewinds — the activity clock gains back the same amount as
+    // the main clock, since it moves with the main clock's own sign here.
+    s = press(s, 'BACKWARD', 'RED', 'PRESS', 6000);
+    expect(selectSecondaryRemainingMs(s, 6000)).toBe(26_000);
+
+    s = press(s, 'FORWARD', 'RED', 'PRESS', 6000);
+    expect(selectSecondaryRemainingMs(s, 6000)).toBe(25_000);
   });
 
   it('resets the period clock on a hold', () => {

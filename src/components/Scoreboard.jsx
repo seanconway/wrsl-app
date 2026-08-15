@@ -31,6 +31,11 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
   const countingDown = ruleset.secondary_clock.polarity === 'count_down';
   const secondaryOwner = state.secondary.owner;
   const accruing = selectSecondaryAccruing(state);
+  // The folkstyle riding-time differential (count-up) is centred under the
+  // main clock with its own holder arrow (FS §6.3); the freestyle/Greco
+  // activity clock (count-down) is unaffected and stays beside its owner's
+  // score, per Corner below.
+  const showsCentralSecondary = clockSlot !== null && !countingDown;
 
   return (
     <div
@@ -64,7 +69,6 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
           corner="RED"
           state={state}
           ruleset={ruleset}
-          differential={differential}
           countingDown={countingDown}
           clockSlot={clockSlot}
           secondaryOwner={secondaryOwner}
@@ -73,13 +77,22 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
           now={now}
         />
 
-        <ClockColumn state={state} clockMs={clockMs} warnAt={warnAt} period={period} />
+        <ClockColumn
+          state={state}
+          clockMs={clockMs}
+          warnAt={warnAt}
+          period={period}
+          showsCentralSecondary={showsCentralSecondary}
+          label={clockSlot ? ruleset[clockSlot].label : null}
+          differential={differential}
+          secondaryOwner={secondaryOwner}
+          accruing={accruing}
+        />
 
         <Corner
           corner="GREEN"
           state={state}
           ruleset={ruleset}
-          differential={differential}
           countingDown={countingDown}
           clockSlot={clockSlot}
           secondaryOwner={secondaryOwner}
@@ -164,7 +177,6 @@ function Corner({
   corner,
   state,
   ruleset,
-  differential,
   countingDown,
   clockSlot,
   secondaryOwner,
@@ -175,11 +187,9 @@ function Corner({
   const edge = isRed ? 'var(--athlete-red)' : 'var(--athlete-green)';
   const athlete = state.athletes[corner];
 
-  // The differential is displayed adjacent to the score of the athlete it
-  // currently favours, moving with the advantage as it changes hands, so the
-  // referee reads the advantage and its owner in one look — no sign to
-  // interpret and no convention to recall (FS §6.3).
-  const showsDifferential = !countingDown && differential.favoured === corner && differential.ms > 0;
+  // count_down (freestyle/Greco activity clock) only: shown beside the
+  // obligated athlete's score, unchanged (FS §6.4). The count_up case
+  // (folkstyle riding time) renders centrally now — see ClockColumn.
   const showsCountdown = countingDown && secondaryOwner === corner;
 
   return (
@@ -239,10 +249,10 @@ function Corner({
           {state.score[corner]}
         </span>
 
-        {(showsDifferential || showsCountdown) && (
+        {showsCountdown && (
           <SecondaryReadout
             label={ruleset[clockSlot ?? 'f1'].label}
-            value={showsCountdown ? formatClock(secondaryMs) : formatPadded(differential.ms)}
+            value={formatClock(secondaryMs)}
             accruing={accruing}
           />
         )}
@@ -329,7 +339,7 @@ function CornerCounters({ state, ruleset, corner }) {
   );
 }
 
-function ClockColumn({ state, clockMs, warnAt, period }) {
+function ClockColumn({ state, clockMs, warnAt, period, showsCentralSecondary, label, differential, secondaryOwner, accruing }) {
   const running = state.clock.running;
   const warning = clockMs <= warnAt && clockMs > 0;
 
@@ -374,6 +384,84 @@ function ClockColumn({ state, clockMs, warnAt, period }) {
           style={{ marginRight: 6, verticalAlign: '-3px' }}
         />
         {running ? 'RUNNING' : 'STOPPED'}
+      </span>
+
+      {showsCentralSecondary && (
+        <RidingTimeReadout label={label} differential={differential} owner={secondaryOwner} accruing={accruing} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The folkstyle riding-time differential (FS §6.3). Favour and holder are
+ * different facts and are shown separately: the readout's colour answers
+ * "who does this favour", an independent arrow answers "who is accruing it
+ * right now" — the two can disagree (favoured athlete ahead on the clock
+ * while the other currently holds control), and both must read correctly
+ * with the main clock stopped, when there is no motion to infer direction
+ * from.
+ */
+function RidingTimeReadout({ label, differential, owner, accruing }) {
+  const favourColour =
+    differential.favoured === 'RED'
+      ? 'var(--athlete-red)'
+      : differential.favoured === 'GREEN'
+        ? 'var(--athlete-green)'
+        : 'var(--text-muted)';
+  const holderColour = owner === 'RED' ? 'var(--athlete-red)' : owner === 'GREEN' ? 'var(--athlete-green)' : null;
+
+  const arrow = (direction) => (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 0,
+        height: 0,
+        borderTop: '7px solid transparent',
+        borderBottom: '7px solid transparent',
+        ...(direction === 'left'
+          ? { borderRight: `11px solid ${holderColour}` }
+          : { borderLeft: `11px solid ${holderColour}` }),
+      }}
+    />
+  );
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 'var(--sp-4)',
+        padding: 'var(--sp-3) var(--sp-6)',
+        border: '1px solid var(--border-hairline)',
+        boxShadow: accruing ? 'var(--glow-live)' : 'none',
+      }}
+    >
+      {/* Reserve the width whether or not the arrow is rendered, so the
+          readout does not shift sideways when ownership deassigns. */}
+      <span style={{ width: 11, display: 'flex', justifyContent: 'flex-end' }}>
+        {owner === 'RED' && arrow('left')}
+      </span>
+
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+        <span className="rr-eyebrow">{label}</span>
+        <span
+          className="rr-num"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 700,
+            fontSize: 'var(--fs-39)',
+            lineHeight: 1,
+            color: favourColour,
+          }}
+        >
+          {formatPadded(differential.ms)}
+        </span>
+      </div>
+
+      <span style={{ width: 11, display: 'flex', justifyContent: 'flex-start' }}>
+        {owner === 'GREEN' && arrow('right')}
       </span>
     </div>
   );

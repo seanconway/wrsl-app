@@ -100,6 +100,20 @@ export function stopAccrual(acc, now) {
   return { accruedMs: accruedMs(acc, now), running: false, refMono: null };
 }
 
+/**
+ * Adjusts accrued time by `deltaMs`, keeping the accumulator's run state.
+ * Clamped at zero — mirrors adjustClock() for the opposite (count-up)
+ * direction, used to correct riding time when the main clock is wound back
+ * or forward over an interval the accumulator was also live for.
+ */
+export function adjustAccrual(acc, deltaMs, now, maxMs = Infinity) {
+  const current = accruedMs(acc, now);
+  const next = Math.min(Math.max(0, current + deltaMs), maxMs);
+  return acc.running
+    ? { accruedMs: next, running: true, refMono: now }
+    : { accruedMs: next, running: false, refMono: null };
+}
+
 // ---------------------------------------------------------------------------
 // Discontinuity detection
 // ---------------------------------------------------------------------------
