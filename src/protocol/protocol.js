@@ -1,7 +1,7 @@
-// Pure wire-protocol module for the dongle <-> app link (see PROTOCOL.md v3.0).
+// Pure wire-protocol module for the dongle <-> app link (see PROTOCOL.md v4.0).
 // No DOM, no Web Serial, no imports from the app. Runs under plain Node.
 
-export const PROTOCOL_VERSION = { major: 3, minor: 0 };
+export const PROTOCOL_VERSION = { major: 4, minor: 0 };
 
 export const MAX_LINE_LENGTH = 120;
 const MAX_CONTENT_LENGTH = MAX_LINE_LENGTH - 1; // 1 byte reserved for the \n terminator
@@ -31,6 +31,11 @@ const LINK_STATE_SET = new Set(LINK_STATES);
 
 export const LED_MODES = ['OFF', 'SOLID'];
 const LED_MODE_SET = new Set(LED_MODES);
+
+/** The fixed palette a remote can actually render (PROTOCOL.md §6) — the app
+ *  states which of these, never an exact colour value. */
+export const LED_COLOURS = ['RED', 'GREEN', 'BLUE', 'YELLOW'];
+const LED_COLOUR_SET = new Set(LED_COLOURS);
 
 /** Waveforms name sensations, not events (PROTOCOL.md §9). */
 export const WAVEFORMS = ['TAP', 'BEAT', 'WARN', 'BUZZ', 'LONG', 'DOUBLE', 'TRIPLE'];
@@ -112,10 +117,6 @@ function splitTokens(line) {
 
 function isDecimalInt(token) {
   return /^\d+$/.test(token);
-}
-
-function isRgb(token) {
-  return /^[0-9A-Fa-f]{6}$/.test(token);
 }
 
 function parseBounded(token, min, max) {
@@ -254,11 +255,13 @@ function parseAck(args) {
 
 function parseState(args) {
   if (args.length !== 5) return invalid('STATE', 'wrong arg count');
-  const [remote, f1, f1rgb, f2, f2rgb] = args;
+  const [remote, f1, f1colour, f2, f2colour] = args;
   if (!REMOTE_SET.has(remote)) return invalid('STATE', 'bad remote');
   if (!LED_MODE_SET.has(f1) || !LED_MODE_SET.has(f2)) return invalid('STATE', 'bad mode');
-  if (!isRgb(f1rgb) || !isRgb(f2rgb)) return invalid('STATE', 'bad rgb');
-  return { type: 'STATE', remote, f1, f1rgb, f2, f2rgb };
+  if (!LED_COLOUR_SET.has(f1colour) || !LED_COLOUR_SET.has(f2colour)) {
+    return invalid('STATE', 'bad colour');
+  }
+  return { type: 'STATE', remote, f1, f1colour, f2, f2colour };
 }
 
 function parseHap(args) {
@@ -319,8 +322,8 @@ export function encodeAck(seq, { silent = false } = {}) {
 /** Always the complete app-owned indicator state for one remote. There is no
  *  partial form, because there is no version of this message that can leave a
  *  remote holding a stale half of its state (PROTOCOL.md §6). */
-export function encodeState(remote, { f1 = 'OFF', f1rgb = '000000', f2 = 'OFF', f2rgb = '000000' } = {}) {
-  return `STATE ${remote} ${f1} ${normaliseRgb(f1rgb)} ${f2} ${normaliseRgb(f2rgb)}`;
+export function encodeState(remote, { f1 = 'OFF', f1colour = 'RED', f2 = 'OFF', f2colour = 'RED' } = {}) {
+  return `STATE ${remote} ${f1} ${normaliseColour(f1colour)} ${f2} ${normaliseColour(f2colour)}`;
 }
 
 export function encodeHap(target, waveform) {
@@ -341,13 +344,14 @@ export function encodeSimsoc(target, pct) {
   return `SIMSOC ${target} ${pct}`;
 }
 
-/** Accepts `#C2F000`, `c2f000` or `C2F000`; emits the six bare uppercase hex
- *  digits the wire format requires. Anything else becomes black rather than a
- *  malformed line — an indicator that fails dark is recoverable, a line the
- *  dongle discards is not. */
-export function normaliseRgb(value) {
-  const hex = String(value ?? '').replace(/^#/, '');
-  return isRgb(hex) ? hex.toUpperCase() : '000000';
+/** Accepts any casing of a palette name; emits the canonical upper-case token
+ *  the wire format requires. Anything else becomes `RED` — a syntactically
+ *  valid line rather than a malformed one — because unlike v3.0's hex field,
+ *  this palette has no "off" value of its own to fail dark to; visibility is
+ *  `<f1>`/`<f2>`'s job, not this one's. */
+export function normaliseColour(value) {
+  const name = String(value ?? '').toUpperCase();
+  return LED_COLOUR_SET.has(name) ? name : 'RED';
 }
 
 // ---------------------------------------------------------------------------

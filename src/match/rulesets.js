@@ -23,12 +23,17 @@ export const ROLE = {
 
 // Indicator colours per role, so a referee can tell a clock indicator from a
 // counter or a flag without recalling which ruleset is loaded (FS §10.3).
-// Values are the design system's signal tokens, brightened for an LED.
+// Values are names from the wire's fixed four-colour palette (PROTOCOL.md
+// §6) — the remote renders exactly these, not a hex value picked without
+// knowing what the hardware could show true. FLAG's value is never actually
+// sent: FLAG (like SECONDARY_CLOCK) renders the holding athlete's colour
+// instead of its role colour (see holderIndicator() in matchReducer.js), so
+// this exists only so the field is never undefined, not because it's read.
 const LED = {
-  CLOCK: '00A0FF', // informational blue — a clock the athlete owns
-  CREDIT: 'C2F000', // lime — accrues to this athlete's benefit
-  AGAINST: 'F5A300', // amber — counts against this athlete
-  FLAG: 'FFFFFF', // white — a neutral memory aid
+  CLOCK: 'BLUE', // informational — a clock the athlete owns
+  CREDIT: 'GREEN', // accrues to this athlete's benefit
+  AGAINST: 'YELLOW', // counts against this athlete
+  FLAG: 'GREEN', // unused on the wire — see comment above
 };
 
 const NO_SECONDARY = {
@@ -41,7 +46,7 @@ const NO_SECONDARY = {
   deassign_at_period_start: false,
 };
 
-const inert = () => ({ role: ROLE.INERT, label: null, led_colour: '000000' });
+const inert = () => ({ role: ROLE.INERT, label: null, led_colour: 'RED' }); // unused — never rendered or read
 
 // ---------------------------------------------------------------------------
 // Folkstyle

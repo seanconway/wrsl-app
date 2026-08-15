@@ -189,12 +189,12 @@ export class DongleModel {
     // Always the complete indicator state for one remote — there is no partial
     // form, so a remote can never hold a stale half (§6). Idempotent by
     // construction: asserting the same state twice changes nothing.
-    const next = { f1: msg.f1, f1rgb: msg.f1rgb, f2: msg.f2, f2rgb: msg.f2rgb };
+    const next = { f1: msg.f1, f1colour: msg.f1colour, f2: msg.f2, f2colour: msg.f2colour };
     this.indicators[msg.remote] = next;
     this._emit({ type: 'indicator', remote: msg.remote, ...next });
     this._note(
-      `${msg.remote} indicators: F1 ${msg.f1}${msg.f1 === 'SOLID' ? ` #${msg.f1rgb}` : ''} · ` +
-        `F2 ${msg.f2}${msg.f2 === 'SOLID' ? ` #${msg.f2rgb}` : ''}`,
+      `${msg.remote} indicators: F1 ${msg.f1}${msg.f1 === 'SOLID' ? ` ${msg.f1colour}` : ''} · ` +
+        `F2 ${msg.f2}${msg.f2 === 'SOLID' ? ` ${msg.f2colour}` : ''}`,
     );
   }
 
@@ -308,7 +308,7 @@ export class DongleModel {
       // and the easiest one to omit because nothing visibly breaks without it
       // until a remote is swapped mid-match (§6.3).
       this.indicators[remote] = null;
-      this._emit({ type: 'indicator', remote, f1: 'OFF', f1rgb: '000000', f2: 'OFF', f2rgb: '000000', cleared: true });
+      this._emit({ type: 'indicator', remote, f1: 'OFF', f1colour: 'RED', f2: 'OFF', f2colour: 'RED', cleared: true });
       this._send(encodeJoin(remote));
     }
   }

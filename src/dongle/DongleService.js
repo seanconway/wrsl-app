@@ -162,7 +162,7 @@ export class DongleService {
 
     for (const remote of ['RED', 'GREEN']) {
       const { f1, f2 } = indicators[remote];
-      const line = encodeState(remote, { f1: f1.mode, f1rgb: f1.rgb, f2: f2.mode, f2rgb: f2.rgb });
+      const line = encodeState(remote, { f1: f1.mode, f1colour: f1.colour, f2: f2.mode, f2colour: f2.colour });
       if (force || this._lastAssertedState[remote] !== line) {
         this._send(line);
         this._lastAssertedState[remote] = line;

@@ -397,9 +397,9 @@ describe('indicators', () => {
     let s = fresh('ncaa');
     s = press(s, 'F1', 'RED', 'PRESS', 1000);
     // Holder-colour rendering (FS §10.3): both wrists show the same thing,
-    // in RED's athlete colour — not the ruleset's per-role led_colour.
-    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'SOLID', rgb: 'E03127' });
-    expect(selectIndicators(s).GREEN.f1).toEqual({ mode: 'SOLID', rgb: 'E03127' });
+    // in RED's own colour — not the ruleset's per-role led_colour.
+    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'SOLID', colour: 'RED' });
+    expect(selectIndicators(s).GREEN.f1).toEqual({ mode: 'SOLID', colour: 'RED' });
 
     s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
     expect(selectIndicators(s).RED.f1.mode).toBe('SOLID');
@@ -411,7 +411,7 @@ describe('indicators', () => {
 
   it('leaves an inert slot off', () => {
     const s = fresh('nfhs');
-    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'OFF', rgb: '000000' });
+    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'OFF', colour: 'RED' });
   });
 });
 

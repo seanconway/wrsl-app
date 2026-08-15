@@ -71,7 +71,9 @@ export default function EmulatorApp() {
           ...prev,
           [event.remote]: {
             ...prev[event.remote],
-            indicators: event.cleared ? null : { f1: event.f1, f1rgb: event.f1rgb, f2: event.f2, f2rgb: event.f2rgb },
+            indicators: event.cleared
+              ? null
+              : { f1: event.f1, f1colour: event.f1colour, f2: event.f2, f2colour: event.f2colour },
           },
         }));
         break;

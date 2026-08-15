@@ -5,6 +5,18 @@ import { RULESETS, ROLE, allPeriods } from '../match/rulesets.js';
 import { selectRuleset } from '../match/matchReducer.js';
 import { formatClock } from '../match/clock.js';
 
+/** Screen-only swatch for the legend below — `led_colour` is now a wire
+ *  palette name (RED/GREEN/BLUE/YELLOW), not a hex value, and matching the
+ *  remote's actual rendering isn't the point here (that's calibrated per
+ *  RADIO_PROTOCOL.md, not by this screen). These are simply distinct,
+ *  legible swatches for a referee reading the legend before a match. */
+const LEGEND_SWATCH = {
+  RED: '#E03127',
+  GREEN: '#12A150',
+  BLUE: '#00A0FF',
+  YELLOW: '#F5A300',
+};
+
 /**
  * Pre-match confirmation (FS §12.3).
  *
@@ -106,7 +118,7 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      border: `2px solid ${config.role === ROLE.INERT ? 'var(--border-strong)' : `#${config.led_colour}`}`,
+                      border: `2px solid ${config.role === ROLE.INERT ? 'var(--border-strong)' : LEGEND_SWATCH[config.led_colour]}`,
                       color: 'var(--text-strong)',
                     }}
                   >

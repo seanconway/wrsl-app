@@ -47,10 +47,10 @@ describe('DongleModel', () => {
   });
 
   describe('handshake', () => {
-    it('announces v3.0 at boot without waiting to be asked', () => {
+    it('announces v4.0 at boot without waiting to be asked', () => {
       // Best-effort and never gated on DTR — a dongle that waits for the
       // signal enumerates and then never answers.
-      expect(h.wire[0]).toMatch(/^HELLO 3\.0 /);
+      expect(h.wire[0]).toMatch(/^HELLO 4\.0 /);
     });
 
     it('answers INFO with HELLO and one LINK line per remote', () => {
@@ -136,15 +136,15 @@ describe('DongleModel', () => {
 
   describe('downlink', () => {
     it('holds the full indicator state asserted by STATE', () => {
-      h.model.receiveLine('STATE RED SOLID 00A0FF OFF 000000');
-      expect(h.model.indicators.RED).toEqual({ f1: 'SOLID', f1rgb: '00A0FF', f2: 'OFF', f2rgb: '000000' });
+      h.model.receiveLine('STATE RED SOLID BLUE OFF RED');
+      expect(h.model.indicators.RED).toEqual({ f1: 'SOLID', f1colour: 'BLUE', f2: 'OFF', f2colour: 'RED' });
     });
 
     it('is idempotent — the same STATE twice changes nothing', () => {
-      h.model.receiveLine('STATE RED SOLID 00A0FF OFF 000000');
+      h.model.receiveLine('STATE RED SOLID BLUE OFF RED');
       const first = h.model.indicators.RED;
       h.clear();
-      h.model.receiveLine('STATE RED SOLID 00A0FF OFF 000000');
+      h.model.receiveLine('STATE RED SOLID BLUE OFF RED');
       expect(h.model.indicators.RED).toEqual(first);
       expect(h.wire).toHaveLength(0);
     });
@@ -190,7 +190,7 @@ describe('DongleModel', () => {
       // substitution work and is the easiest to omit, because nothing visibly
       // breaks without it until a remote is swapped mid-match (§6.3).
       h.model.setLink('RED', { state: 'DISCONNECTED' });
-      h.model.receiveLine('STATE RED SOLID 00A0FF OFF 000000');
+      h.model.receiveLine('STATE RED SOLID BLUE OFF RED');
       h.clear();
 
       h.model.setLink('RED', { state: 'CONNECTED' });

@@ -16,7 +16,7 @@ import {
   NOTIFY,
 } from '../match/matchReducer.js';
 
-const HELLO = 'HELLO 3.0 0.2.0 RR-0147 0';
+const HELLO = 'HELLO 4.0 0.2.0 RR-0147 0';
 
 /**
  * A harness that wires a real match reducer to the service, because the two
@@ -90,8 +90,8 @@ describe('handshake', () => {
 
     expect(h.transport.outbox).toEqual([
       'CFG BOTH 80 70',
-      'STATE RED OFF 000000 OFF 000000',
-      'STATE GREEN OFF 000000 OFF 000000',
+      'STATE RED OFF RED OFF RED',
+      'STATE GREEN OFF RED OFF RED',
     ]);
     expect(h.service.handshakeState).toBe('ready');
   });
@@ -99,13 +99,13 @@ describe('handshake', () => {
   it('records the officiating set identity', async () => {
     const h = harness();
     await h.connectAndHandshake();
-    expect(h.service.identity).toEqual({ proto: '3.0', fw: '0.2.0', set: 'RR-0147', caps: 0 });
+    expect(h.service.identity).toEqual({ proto: '4.0', fw: '0.2.0', set: 'RR-0147', caps: 0 });
   });
 
   it('refuses a different major protocol version', async () => {
     const h = harness();
     await h.service.connect();
-    h.transport.simulateLine('HELLO 2.0 0.1.0 RR-0147 0');
+    h.transport.simulateLine('HELLO 3.0 0.1.0 RR-0147 0');
     expect(h.service.handshakeState).toBe('refused');
     expect(h.logs.join()).toMatch(/update the dongle firmware/i);
   });
@@ -113,7 +113,7 @@ describe('handshake', () => {
   it('warns and continues on a differing minor version', async () => {
     const h = harness();
     await h.service.connect();
-    h.transport.simulateLine('HELLO 3.1 0.3.0 RR-0147 0');
+    h.transport.simulateLine('HELLO 4.1 0.3.0 RR-0147 0');
     expect(h.service.handshakeState).toBe('ready');
     expect(h.logs.join()).toMatch(/minor version/i);
   });
@@ -133,13 +133,13 @@ describe('set substitution', () => {
     h.dispatch({ type: 'INPUT', button: 'ADD_POINT', gesture: 'PRESS', src: 'RED', now: 1000 });
     h.transport.outbox.length = 0;
 
-    h.transport.simulateLine('HELLO 3.0 0.2.0 RR-0203 0');
+    h.transport.simulateLine('HELLO 4.0 0.2.0 RR-0203 0');
 
     // Match state is fully retained across a change of connected dongle; the
     // referee re-enters nothing (FS §8.6).
     expect(h.state.score.RED).toBe(1);
     expect(h.state.log.some((e) => e.type === 'SET_SUBSTITUTION')).toBe(true);
-    expect(h.transport.outbox).toContain('STATE RED OFF 000000 OFF 000000');
+    expect(h.transport.outbox).toContain('STATE RED OFF RED OFF RED');
     expect(h.logs.join()).toMatch(/RR-0147 → RR-0203/);
   });
 });
@@ -223,7 +223,7 @@ describe('indicator assertion', () => {
     h.transport.outbox.length = 0;
 
     h.transport.simulateLine('JOIN RED');
-    expect(h.transport.outbox).toContain('STATE RED OFF 000000 OFF 000000');
+    expect(h.transport.outbox).toContain('STATE RED OFF RED OFF RED');
   });
 
   it('reflects secondary-clock ownership', async () => {
@@ -235,8 +235,8 @@ describe('indicator assertion', () => {
 
     // Holder-colour rendering (FS §10.3): both remotes show RED's colour now
     // that F1 is owned by RED, not just the owning remote.
-    expect(h.transport.outbox).toContain('STATE RED SOLID E03127 OFF 000000');
-    expect(h.transport.outbox).toContain('STATE GREEN SOLID E03127 OFF 000000');
+    expect(h.transport.outbox).toContain('STATE RED SOLID RED OFF RED');
+    expect(h.transport.outbox).toContain('STATE GREEN SOLID RED OFF RED');
   });
 
   it('sends nothing when nothing changed', async () => {
@@ -254,7 +254,7 @@ describe('indicator assertion', () => {
     h.transport.simulateLine('EVT F2 PRESS GREEN 1');
     h.transport.outbox.length = 0;
     h.service.assertIndicators({ force: true });
-    expect(h.transport.outbox).toContain('STATE GREEN OFF 000000 SOLID F5A300');
+    expect(h.transport.outbox).toContain('STATE GREEN OFF RED SOLID YELLOW');
   });
 });
 
@@ -397,7 +397,7 @@ describe('reconnect', () => {
     // "From scratch" on the wire is not "from scratch" for the match: the
     // indicator lines carry the state the reducer still holds. Holder-colour
     // rendering (FS §10.3): RED's colour, since RED owns F1.
-    expect(h.transport.outbox).toContain('STATE RED SOLID E03127 OFF 000000');
+    expect(h.transport.outbox).toContain('STATE RED SOLID RED OFF RED');
   });
 
   it('does not leak a second PING cadence across ten reconnects', async () => {

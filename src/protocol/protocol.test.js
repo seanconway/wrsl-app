@@ -11,7 +11,7 @@ import {
   encodeLink,
   encodeJoin,
   encodeTest,
-  normaliseRgb,
+  normaliseColour,
   nextSeq,
   seqDistance,
   SEQ_MODULUS,
@@ -107,18 +107,18 @@ describe('PROTOCOL.md §14 parser cases', () => {
   });
 
   it('T12 parses STATE', () => {
-    expect(parseLine('STATE RED SOLID 00A0FF OFF 000000')).toEqual({
+    expect(parseLine('STATE RED SOLID BLUE OFF RED')).toEqual({
       type: 'STATE',
       remote: 'RED',
       f1: 'SOLID',
-      f1rgb: '00A0FF',
+      f1colour: 'BLUE',
       f2: 'OFF',
-      f2rgb: '000000',
+      f2colour: 'RED',
     });
   });
 
-  it('T13 rejects a five-character colour', () => {
-    expect(parseLine('STATE RED SOLID 00A0F OFF 000000').type).toBe('INVALID');
+  it('T13 rejects a colour outside the four-name palette', () => {
+    expect(parseLine('STATE RED SOLID ORANGE OFF RED').type).toBe('INVALID');
   });
 
   it('T14 rejects LINK CONNECTED without rssi', () => {
@@ -201,27 +201,28 @@ describe('ACK', () => {
 
 describe('STATE', () => {
   it('always emits the complete state for one remote', () => {
-    expect(encodeState('GREEN', { f1: 'SOLID', f1rgb: '#c2f000' })).toBe('STATE GREEN SOLID C2F000 OFF 000000');
+    expect(encodeState('GREEN', { f1: 'SOLID', f1colour: 'green' })).toBe('STATE GREEN SOLID GREEN OFF RED');
   });
 
   it('is byte-identical for identical state, so it can be deduplicated safely', () => {
-    const args = { f1: 'SOLID', f1rgb: '00A0FF', f2: 'OFF', f2rgb: '000000' };
+    const args = { f1: 'SOLID', f1colour: 'BLUE', f2: 'OFF', f2colour: 'RED' };
     expect(encodeState('RED', args)).toBe(encodeState('RED', { ...args }));
   });
 });
 
-describe('normaliseRgb', () => {
-  it('accepts hash-prefixed and lowercase input', () => {
-    expect(normaliseRgb('#c2f000')).toBe('C2F000');
-    expect(normaliseRgb('C2F000')).toBe('C2F000');
+describe('normaliseColour', () => {
+  it('accepts any casing of a palette name', () => {
+    expect(normaliseColour('green')).toBe('GREEN');
+    expect(normaliseColour('GREEN')).toBe('GREEN');
   });
 
-  it('fails an unusable value to black rather than to a malformed line', () => {
-    // An indicator that fails dark is recoverable; a line the dongle discards
-    // leaves the remote rendering whatever it had before, indefinitely.
-    expect(normaliseRgb('nope')).toBe('000000');
-    expect(normaliseRgb(undefined)).toBe('000000');
-    expect(normaliseRgb('#fff')).toBe('000000');
+  it('falls back to RED for anything outside the palette, rather than a malformed line', () => {
+    // Unlike v3.0's hex field there is no "off" value here to fail dark to —
+    // visibility is <f1>/<f2>'s job, not this one's — so the fallback only
+    // has to be syntactically valid, not meaningful.
+    expect(normaliseColour('nope')).toBe('RED');
+    expect(normaliseColour(undefined)).toBe('RED');
+    expect(normaliseColour('#c2f000')).toBe('RED');
   });
 });
 

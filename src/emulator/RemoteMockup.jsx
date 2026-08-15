@@ -124,6 +124,7 @@ export default function RemoteMockup({
 const LADDER_RED = '#e0392c';
 const LADDER_YELLOW = '#e0b400';
 const LADDER_GREEN = '#38d430';
+const LADDER_BLUE = '#2c8ce0';
 
 function batteryColour(pct) {
   if (pct < 33) return LADDER_RED;
@@ -135,6 +136,11 @@ function linkColour(radioUp, hostUp) {
   if (!radioUp) return LADDER_RED;
   return hostUp ? LADDER_GREEN : LADDER_YELLOW;
 }
+
+// F1/F2 carry a colour *name* off the wire now (PROTOCOL.md §6), not a hex
+// value — same four-name palette as LED_LINK/LED_PWR's ladder above, so
+// there's one swatch per name rather than a second palette to keep in step.
+const PALETTE = { RED: LADDER_RED, GREEN: LADDER_GREEN, BLUE: LADDER_BLUE, YELLOW: LADDER_YELLOW };
 
 /** The four indicators of FS §10: power, link, and the two function LEDs. Only
  *  F1 and F2 come off the wire — power and link are device-local state, which
@@ -149,12 +155,12 @@ function IndicatorRow({ link, indicators, batteryPct, appDown, portOpen }) {
       <Led
         label="F1"
         on={indicators?.f1 === 'SOLID'}
-        colour={indicators?.f1 === 'SOLID' ? `#${indicators.f1rgb}` : '#333'}
+        colour={indicators?.f1 === 'SOLID' ? PALETTE[indicators.f1colour] : '#333'}
       />
       <Led
         label="F2"
         on={indicators?.f2 === 'SOLID'}
-        colour={indicators?.f2 === 'SOLID' ? `#${indicators.f2rgb}` : '#333'}
+        colour={indicators?.f2 === 'SOLID' ? PALETTE[indicators.f2colour] : '#333'}
       />
       <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-12)', color: 'var(--text-muted)' }}>
         {connected ? `${link.rssi} dBm · ${link.batt}%` : link.state.toLowerCase()}
