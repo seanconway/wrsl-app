@@ -1,6 +1,6 @@
 import React from 'react';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
-import { formatClock, formatPadded, remainingMs } from '../match/clock.js';
+import { formatClock, formatPadded, formatPaddedCeil, remainingMs } from '../match/clock.js';
 import {
   selectRuleset,
   selectPeriod,
@@ -235,13 +235,18 @@ function Corner({
           minHeight: 0,
         }}
       >
+        {/* Mono rather than the display face: at scoreboard size a proportional
+            black weight reads as heavy and rounded from a distance, exactly
+            where legibility matters most. JetBrains Mono's open counters and
+            distinct strokes are the "mono or tabular" the design system's own
+            content rules call for on scores. */}
         <span
           className="rr-num"
           style={{
-            fontFamily: 'var(--font-display)',
-            fontWeight: 900,
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 800,
             fontSize: 'clamp(var(--fs-104), 18vw, var(--fs-220))',
-            letterSpacing: 'var(--ls-mega)',
+            letterSpacing: 'var(--ls-normal)',
             lineHeight: 0.9,
             color: 'var(--text-strong)',
           }}
@@ -411,6 +416,17 @@ function RidingTimeReadout({ label, differential, owner, accruing }) {
         : 'var(--text-muted)';
   const holderColour = owner === 'RED' ? 'var(--athlete-red)' : owner === 'GREEN' ? 'var(--athlete-green)' : null;
 
+  // Two different quantities share this one readout, and they round opposite
+  // ways. While the holder is closing a deficit (owner !== favoured), the
+  // number is a countdown to the crossing and must never touch 00:00 early —
+  // ceil, same convention as the main clock. The instant it crosses, owner
+  // catches up to favoured and this becomes a fresh count-up from zero — floor,
+  // ordinary elapsed-time display. Without this split, the countdown's last
+  // second and the count-up's first second both render 00:00, in opposite
+  // colours, and the crossing appears to take two seconds instead of one.
+  const closing = owner !== null && differential.favoured !== null && owner !== differential.favoured;
+  const value = closing ? formatPaddedCeil(differential.ms) : formatPadded(differential.ms);
+
   const arrow = (direction) => (
     <span
       aria-hidden="true"
@@ -456,7 +472,7 @@ function RidingTimeReadout({ label, differential, owner, accruing }) {
             color: favourColour,
           }}
         >
-          {formatPadded(differential.ms)}
+          {value}
         </span>
       </div>
 

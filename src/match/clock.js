@@ -162,3 +162,17 @@ export function formatPadded(ms) {
   const s = total % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+/**
+ * `MM:SS`, rounding up rather than down — the ceil counterpart to
+ * formatPadded(), for a value counting down toward a threshold rather than up
+ * from zero. Never displays `00:00` for a positive `ms`, matching
+ * formatClock()'s main-clock convention: `00:00` means the threshold has
+ * actually been reached, not merely that under a second remains.
+ */
+export function formatPaddedCeil(ms) {
+  const total = Math.ceil(Math.max(0, ms) / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}

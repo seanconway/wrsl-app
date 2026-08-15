@@ -14,6 +14,10 @@ import { Icon } from '../design-system/components/core/Icon.jsx';
 export default function App() {
   const [stage, setStage] = useState('prematch'); // prematch | match
   const [detailOpen, setDetailOpen] = useState(false);
+  // Collapsed by default: the on-screen remotes are a debugging and
+  // bench-testing aid, not part of normal operation, and they otherwise
+  // claim nearly half the display that the mat-visible scoreboard needs.
+  const [controlsOpen, setControlsOpen] = useState(false);
   const [fault, setFault] = useState(null);
 
   // The match tick stamps the watchdog, and the watchdog is constructed after
@@ -135,7 +139,9 @@ export default function App() {
               handshakeState={dongle.handshakeState}
             />
           </div>
-          <OperatorControls state={state} dispatch={dispatch} disabled={Boolean(state.halted)} />
+          {controlsOpen && (
+            <OperatorControls state={state} dispatch={dispatch} disabled={Boolean(state.halted)} />
+          )}
         </div>
 
         {detailOpen && (
@@ -163,6 +169,11 @@ export default function App() {
           {state.athletes.RED.name || 'RED'} v {state.athletes.GREEN.name || 'GREEN'}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--sp-4)' }}>
+          <FooterButton
+            icon="hand"
+            label={controlsOpen ? 'Hide controls' : 'Controls'}
+            onClick={() => setControlsOpen((o) => !o)}
+          />
           <FooterButton icon="list" label={detailOpen ? 'Hide detail' : 'Detail'} onClick={() => setDetailOpen((o) => !o)} />
           <FooterButton
             icon="rotate-ccw"
