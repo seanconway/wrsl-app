@@ -9,8 +9,20 @@ const EMPTY_COUNTERS = { evt: 0, taps: 0, beats: 0, silent: 0, expired: 0, lastA
 
 function initialRemoteState() {
   return {
-    RED: { link: { state: 'CONNECTED', rssi: -50, batt: 92 }, indicators: null, haptic: null, counters: { ...EMPTY_COUNTERS } },
-    GREEN: { link: { state: 'CONNECTED', rssi: -58, batt: 77 }, indicators: null, haptic: null, counters: { ...EMPTY_COUNTERS } },
+    RED: {
+      link: { state: 'CONNECTED', rssi: -50, batt: 92 },
+      indicators: null,
+      haptic: null,
+      counters: { ...EMPTY_COUNTERS },
+      batteryPct: 80,
+    },
+    GREEN: {
+      link: { state: 'CONNECTED', rssi: -58, batt: 77 },
+      indicators: null,
+      haptic: null,
+      counters: { ...EMPTY_COUNTERS },
+      batteryPct: 80,
+    },
   };
 }
 
@@ -115,6 +127,13 @@ export default function EmulatorApp() {
         setConfig({ haptic: event.haptic, bright: event.bright });
         break;
 
+      case 'battery':
+        setRemotes((prev) => ({
+          ...prev,
+          [event.remote]: { ...prev[event.remote], batteryPct: event.pct },
+        }));
+        break;
+
       case 'appTimeout':
         setAppDown(true);
         break;
@@ -209,6 +228,8 @@ export default function EmulatorApp() {
             indicators={remotes[remote].indicators}
             haptic={remotes[remote].haptic}
             counters={remotes[remote].counters}
+            batteryPct={remotes[remote].batteryPct}
+            appDown={appDown}
             portOpen={connected}
             onPress={(button, gesture) => press(remote, button, gesture)}
             onToggleLink={() => toggleLink(remote)}

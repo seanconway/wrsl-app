@@ -175,6 +175,8 @@ export function parseLine(line) {
       return parseHap(args);
     case 'CFG':
       return parseCfg(args);
+    case 'SIMSOC':
+      return parseSimsoc(args);
     case 'PING':
       return args.length === 0 ? { type: 'PING' } : invalid('PING', 'unexpected args');
     case 'INFO':
@@ -277,6 +279,15 @@ function parseCfg(args) {
   return { type: 'CFG', target, haptic, bright };
 }
 
+function parseSimsoc(args) {
+  if (args.length !== 2) return invalid('SIMSOC', 'wrong arg count');
+  const [target, pctToken] = args;
+  if (!TARGET_SET.has(target)) return invalid('SIMSOC', 'bad target');
+  const pct = parseBounded(pctToken, 0, 100);
+  if (pct === null) return invalid('SIMSOC', 'value out of range');
+  return { type: 'SIMSOC', target, pct };
+}
+
 function parseTest(args) {
   if (args.length !== 1) return invalid('TEST', 'wrong arg count');
   const mode = parseBounded(args[0], 0, 9);
@@ -322,6 +333,12 @@ export function encodeCfg(target, haptic, bright) {
 
 export function encodeTest(mode) {
   return `TEST ${mode}`;
+}
+
+/** Bench-only: simulated LED_PWR state of charge (PROTOCOL.md §6.5). Never
+ *  feeds the app's own battery display — that stays UP_TELEMETRY's job. */
+export function encodeSimsoc(target, pct) {
+  return `SIMSOC ${target} ${pct}`;
 }
 
 /** Accepts `#C2F000`, `c2f000` or `C2F000`; emits the six bare uppercase hex

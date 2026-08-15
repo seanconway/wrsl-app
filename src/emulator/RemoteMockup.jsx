@@ -39,7 +39,18 @@ const BUTTON_LAYOUT = [
   [{ id: 'F2', label: 'F2' }, { id: 'REMOVE_POINT', label: '−1' }, { id: 'F1', label: 'F1' }],
 ];
 
-export default function RemoteMockup({ remote, link, indicators, haptic, counters, portOpen, onPress, onToggleLink }) {
+export default function RemoteMockup({
+  remote,
+  link,
+  indicators,
+  haptic,
+  counters,
+  batteryPct,
+  appDown,
+  portOpen,
+  onPress,
+  onToggleLink,
+}) {
   const edge = remote === 'RED' ? 'var(--athlete-red)' : 'var(--athlete-green)';
   // Two separate reasons a button can be dead, and they must not be conflated:
   // no serial port means there is nothing to talk to, while a downed link is
@@ -83,7 +94,7 @@ export default function RemoteMockup({ remote, link, indicators, haptic, counter
         </button>
       </header>
 
-      <IndicatorRow link={link} indicators={indicators} portOpen={portOpen} />
+      <IndicatorRow link={link} indicators={indicators} batteryPct={batteryPct} appDown={appDown} portOpen={portOpen} />
       <HapticMotor haptic={haptic} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-2)' }}>
@@ -106,17 +117,35 @@ export default function RemoteMockup({ remote, link, indicators, haptic, counter
   );
 }
 
+// FS §10.1/§10.2: both LED_PWR and LED_LINK are now 3-band red/yellow/green
+// ladders, not the earlier binary/blue schemes. Same band logic as
+// remote/src/indicators.c's COLOR_RED/YELLOW/GREEN and update_link()/
+// update_battery(), so the emulator stays a faithful stand-in for firmware.
+const LADDER_RED = '#e0392c';
+const LADDER_YELLOW = '#e0b400';
+const LADDER_GREEN = '#38d430';
+
+function batteryColour(pct) {
+  if (pct < 33) return LADDER_RED;
+  if (pct < 66) return LADDER_YELLOW;
+  return LADDER_GREEN;
+}
+
+function linkColour(radioUp, hostUp) {
+  if (!radioUp) return LADDER_RED;
+  return hostUp ? LADDER_GREEN : LADDER_YELLOW;
+}
+
 /** The four indicators of FS §10: power, link, and the two function LEDs. Only
  *  F1 and F2 come off the wire — power and link are device-local state, which
  *  is why a remote can render link loss with nothing to tell it to. */
-function IndicatorRow({ link, indicators, portOpen }) {
+function IndicatorRow({ link, indicators, batteryPct, appDown, portOpen }) {
   const connected = link.state === 'CONNECTED';
-  const batteryLow = link.batt <= 20;
 
   return (
     <div style={{ display: 'flex', gap: 'var(--sp-4)', alignItems: 'center', flexWrap: 'wrap' }}>
-      <Led label="PWR" on={batteryLow ? true : link.batt > 0} colour={batteryLow ? '#ff9500' : '#38d430'} />
-      <Led label="LINK" on={connected} colour="#00a0ff" blink={!connected} />
+      <Led label="PWR" on colour={batteryColour(batteryPct)} />
+      <Led label="LINK" on colour={linkColour(connected, !appDown)} />
       <Led
         label="F1"
         on={indicators?.f1 === 'SOLID'}

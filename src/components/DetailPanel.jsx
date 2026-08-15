@@ -349,6 +349,15 @@ function SystemDetail({ state, dongle, onSendRaw }) {
             </Button>
           ))}
         </div>
+        {/* One button per LED_PWR colour band (FS §10.1) — exercises the real
+            wire path (PROTOCOL.md §6.5) rather than a hardcoded constant. */}
+        <div style={{ marginTop: 'var(--sp-3)', display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+          {['SIMSOC BOTH 20', 'SIMSOC BOTH 50', 'SIMSOC BOTH 90'].map((c) => (
+            <Button key={c} variant="ghost" size="sm" onClick={() => onSendRaw(c)}>
+              {c}
+            </Button>
+          ))}
+        </div>
       </Section>
 
       <Section title="Wire log">

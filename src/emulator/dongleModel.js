@@ -82,6 +82,13 @@ export class DongleModel {
     // Last indicator state asserted by the app, per remote. Null until the
     // handshake asserts one, which is exactly what a real remote holds.
     this.indicators = { RED: null, GREEN: null };
+    // LED_PWR's simulated state of charge (PROTOCOL.md §6.5), separate from
+    // this.link[remote].batt above — that's the real-telemetry direction
+    // (UP_TELEMETRY, device -> app); this is the opposite direction, bench-
+    // only, app -> device. Conflating them would be exactly the mistake
+    // matchReducer.js's DN_SIMSOC comment warns firmware against. Defaults
+    // match indicators.c's BATTERY_PCT_DEFAULT.
+    this.batteryPct = { RED: 80, GREEN: 80 };
   }
 
   // -- lifecycle ------------------------------------------------------------
@@ -161,9 +168,21 @@ export class DongleModel {
       case 'TEST':
         this.setTestMode(msg.mode);
         break;
+      case 'SIMSOC':
+        this._handleSimsoc(msg);
+        break;
       default:
         break;
     }
+  }
+
+  _handleSimsoc(msg) {
+    const targets = msg.target === 'BOTH' ? REMOTES : [msg.target];
+    for (const remote of targets) {
+      this.batteryPct[remote] = msg.pct;
+      this._emit({ type: 'battery', remote, pct: msg.pct });
+    }
+    this._note(`SIMSOC ${msg.target} ${msg.pct}%`);
   }
 
   _handleState(msg) {

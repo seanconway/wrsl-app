@@ -233,8 +233,10 @@ describe('indicator assertion', () => {
     h.transport.outbox.length = 0;
     h.service.assertIndicators({ force: true });
 
-    expect(h.transport.outbox).toContain('STATE RED SOLID 00A0FF OFF 000000');
-    expect(h.transport.outbox).toContain('STATE GREEN OFF 000000 OFF 000000');
+    // Holder-colour rendering (FS §10.3): both remotes show RED's colour now
+    // that F1 is owned by RED, not just the owning remote.
+    expect(h.transport.outbox).toContain('STATE RED SOLID E03127 OFF 000000');
+    expect(h.transport.outbox).toContain('STATE GREEN SOLID E03127 OFF 000000');
   });
 
   it('sends nothing when nothing changed', async () => {
@@ -393,8 +395,9 @@ describe('reconnect', () => {
     h.transport.simulateLine(HELLO);
 
     // "From scratch" on the wire is not "from scratch" for the match: the
-    // indicator lines carry the state the reducer still holds.
-    expect(h.transport.outbox).toContain('STATE RED SOLID 00A0FF OFF 000000');
+    // indicator lines carry the state the reducer still holds. Holder-colour
+    // rendering (FS §10.3): RED's colour, since RED owns F1.
+    expect(h.transport.outbox).toContain('STATE RED SOLID E03127 OFF 000000');
   });
 
   it('does not leak a second PING cadence across ten reconnects', async () => {

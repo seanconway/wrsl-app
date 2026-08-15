@@ -393,15 +393,20 @@ describe('phases', () => {
 });
 
 describe('indicators', () => {
-  it('lights the clock indicator on the owner whether accruing or paused', () => {
+  it('lights the clock indicator on both remotes, in the owner\'s colour, whether accruing or paused', () => {
     let s = fresh('ncaa');
     s = press(s, 'F1', 'RED', 'PRESS', 1000);
-    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'SOLID', rgb: '00A0FF' });
+    // Holder-colour rendering (FS §10.3): both wrists show the same thing,
+    // in RED's athlete colour — not the ruleset's per-role led_colour.
+    expect(selectIndicators(s).RED.f1).toEqual({ mode: 'SOLID', rgb: 'E03127' });
+    expect(selectIndicators(s).GREEN.f1).toEqual({ mode: 'SOLID', rgb: 'E03127' });
 
     s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
     expect(selectIndicators(s).RED.f1.mode).toBe('SOLID');
+    expect(selectIndicators(s).GREEN.f1.mode).toBe('SOLID');
     s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 5000);
     expect(selectIndicators(s).RED.f1.mode).toBe('SOLID');
+    expect(selectIndicators(s).GREEN.f1.mode).toBe('SOLID');
   });
 
   it('leaves an inert slot off', () => {

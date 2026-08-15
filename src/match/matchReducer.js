@@ -29,6 +29,15 @@ export const MATCH_STATE_VERSION = 3;
 const CORNERS = ['RED', 'GREEN'];
 const CLOCK_ADJUST_MS = 1000;
 
+/** Wire-format (no `#`) athlete corner colours, for indicator rendering only
+ *  — never for UI, which uses `var(--athlete-red)`/`var(--athlete-green)`
+ *  (design-system/tokens/colors.css). Two representations of the same fact,
+ *  kept in step by hand; if colors.css's `--athlete-red`/`--athlete-green`
+ *  ever change, these must change with them (the same kind of divergence
+ *  risk PROTOCOL.md's hard-link trap warns about, just smaller). */
+const ATHLETE_RED_HEX = 'E03127';
+const ATHLETE_GREEN_HEX = '12A150';
+
 /** Notification kinds. The mapping to haptic waveforms lives in the dongle
  *  layer (PROTOCOL.md §9.2), because it is transport policy, not officiating. */
 export const NOTIFY = {
@@ -144,6 +153,16 @@ export function isInertInput(state, button) {
   return functionSlot(selectRuleset(state), slot).role === ROLE.INERT;
 }
 
+const athleteHex = (corner) => (corner === 'RED' ? ATHLETE_RED_HEX : ATHLETE_GREEN_HEX);
+
+/** Secondary clock and tri-state flag render identically on both remotes, in
+ *  the holding athlete's colour — not the ruleset's per-role `led_colour`
+ *  (FS §10.3). Whichever wrist a referee glances at answers "who holds
+ *  this," by the same red/green they already use to identify corners
+ *  everywhere else. `null` owner (unowned) renders off on both. */
+const holderIndicator = (owner) =>
+  owner === null ? { mode: 'OFF', rgb: '000000' } : { mode: 'SOLID', rgb: athleteHex(owner) };
+
 /** What each remote's F1/F2 indicators should render right now. The single
  *  source for every STATE line (PROTOCOL.md §6). */
 export function selectIndicators(state) {
@@ -154,20 +173,22 @@ export function selectIndicators(state) {
     const config = functionSlot(ruleset, slot);
     switch (config.role) {
       case ROLE.SECONDARY_CLOCK:
-        // Lit whenever this athlete owns the clock, accruing or paused.
         // Ownership is the question the LED answers; the running/paused
-        // distinction is carried by the heartbeat, not by the LED.
-        return state.secondary.owner === corner && clockSlot === slot
-          ? { mode: 'SOLID', rgb: config.led_colour }
+        // distinction is carried by the heartbeat, not by the LED. Same
+        // rendering sent to both remotes — see holderIndicator().
+        return clockSlot === slot
+          ? holderIndicator(state.secondary.owner)
           : { mode: 'OFF', rgb: '000000' };
       case ROLE.COUNTER:
+        // Unlike clock/flag, a counter has no cross-remote holder — each
+        // remote tracks its own athlete's count independently — so the
+        // ruleset's role colour (distinguishing e.g. a caution counter
+        // from an advantage counter) is still what's rendered here.
         return state.counters[corner][slot] > 0
           ? { mode: 'SOLID', rgb: config.led_colour }
           : { mode: 'OFF', rgb: '000000' };
       case ROLE.FLAG:
-        return state.flags[slot] === corner
-          ? { mode: 'SOLID', rgb: config.led_colour }
-          : { mode: 'OFF', rgb: '000000' };
+        return holderIndicator(state.flags[slot]);
       default:
         return { mode: 'OFF', rgb: '000000' };
     }
