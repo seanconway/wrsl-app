@@ -25,7 +25,7 @@ import {
 } from './clock.js';
 import { ROLE, getRuleset, functionSlot, secondaryClockSlot, phaseIndexAt } from './rulesets.js';
 
-export const MATCH_STATE_VERSION = 4;
+export const MATCH_STATE_VERSION = 5;
 
 const CORNERS = ['RED', 'GREEN'];
 const CLOCK_ADJUST_MS = 1000;
@@ -68,16 +68,20 @@ export function createInitialMatchState(rulesetId, { now = 0, wallNow = Date.now
       GREEN: { name: 'Green', team: '' },
     },
     periodIndex: 0,
-    // Regulation periods are copied out of the ruleset rather than read
-    // through it, so state, league and rules-cycle variation is a pre-match
-    // settings edit rather than a fork of the ruleset (FS §12.1). Each entry
-    // carries its own secondary_clock rather than being re-derived from the
-    // ruleset by index, so a structural edit (add/remove/rename) never causes
-    // a surviving period to inherit another one's cascade rule by index
-    // shift. Overtime is not structurally editable — only its duration is,
-    // via overtimeDurations — so it stays a plain array of overrides.
-    periods: ruleset.periods.map((p) => ({ label: p.label, duration_s: p.duration_s, secondary_clock: p.secondary_clock })),
-    overtimeDurations: ruleset.overtime.map((p) => p.duration_s),
+    // The whole period list — regulation and overtime alike — copied out of
+    // the ruleset rather than read through it, so a competition's period or
+    // overtime structure is a pre-match settings edit rather than a fork of
+    // the ruleset (FS §12.1). The structure menu treats every entry
+    // identically: nothing in ADD_PERIOD/REMOVE_PERIOD/RENAME_PERIOD
+    // distinguishes where a period originated. `overtime` is carried only as
+    // a display flag (the live "· OVERTIME" banner) — each entry still
+    // carries its own secondary_clock rather than being re-derived by index,
+    // so a structural edit never causes a surviving period to inherit
+    // another one's cascade rule by index shift.
+    periods: [
+      ...ruleset.periods.map((p) => ({ label: p.label, duration_s: p.duration_s, secondary_clock: p.secondary_clock, overtime: false })),
+      ...ruleset.overtime.map((p) => ({ label: p.label, duration_s: p.duration_s, secondary_clock: p.secondary_clock, overtime: true })),
+    ],
     clock: createClock(ruleset.periods[0].duration_s * 1000),
     score: { RED: 0, GREEN: 0 },
     counters: { RED: { f1: 0, f2: 0 }, GREEN: { f1: 0, f2: 0 } },
@@ -117,23 +121,13 @@ export function selectRuleset(state) {
   return getRuleset(state.rulesetId);
 }
 
-/** The match's own ordered period list: the (possibly user-customised, FS
- *  §12.1) regulation periods followed by the ruleset's fixed-structure
- *  overtime rounds with their duration overrides applied. The one list the
- *  reducer and UI treat a period and an overtime round identically through —
- *  nothing in the input model distinguishes them. */
+/** The match's own ordered period list — the whole thing (possibly
+ *  user-customised, FS §12.1) is match state, not re-derived from the
+ *  ruleset. The one list the reducer and UI treat every period through,
+ *  regulation or overtime alike; nothing in the input model distinguishes
+ *  them beyond the display-only `overtime` flag each entry carries. */
 export function selectMatchPeriods(state) {
-  const ruleset = selectRuleset(state);
-  return [
-    ...state.periods.map((p) => ({ ...p, overtime: false })),
-    ...ruleset.overtime.map((p, i) => ({
-      label: p.label,
-      duration_s: state.overtimeDurations[i] ?? p.duration_s,
-      secondary_clock: p.secondary_clock,
-      type: p.type,
-      overtime: true,
-    })),
-  ];
+  return state.periods;
 }
 
 export function selectPeriod(state) {
@@ -705,20 +699,12 @@ export function matchReducer(state, action) {
 
     case 'SET_PERIOD_DURATION': {
       // Pre-match customisation only — a running clock is never resized under
-      // the referee. Same flat 0..N-1 index the UI has always dispatched;
-      // routed to regulation or overtime beneath it.
+      // the referee.
       if (state.clock.running) return state;
       const seconds = Math.max(1, Math.round(action.seconds));
-      let next;
-      if (action.index < state.periods.length) {
-        const periods = [...state.periods];
-        periods[action.index] = { ...periods[action.index], duration_s: seconds };
-        next = { ...state, periods };
-      } else {
-        const overtimeDurations = [...state.overtimeDurations];
-        overtimeDurations[action.index - state.periods.length] = seconds;
-        next = { ...state, overtimeDurations };
-      }
+      const periods = [...state.periods];
+      periods[action.index] = { ...periods[action.index], duration_s: seconds };
+      const next = { ...state, periods };
       return action.index === state.periodIndex ? enterPeriod(next, state.periodIndex, now) : next;
     }
 
@@ -726,13 +712,18 @@ export function matchReducer(state, action) {
     // only, and stricter than SET_PERIOD_DURATION's clock-running-only guard:
     // adding, removing or reordering periods the match has already stepped
     // through is semantically incoherent in a way resizing a duration isn't,
-    // so nothing may have happened yet. Overtime is excluded — its fixed
-    // count/order carries real meaning (folkstyle SV/TB1/TB2/UTB) that
-    // add/remove would break; only its duration is editable, above.
+    // so nothing may have happened yet. Regulation and overtime periods are
+    // not distinguished — a competition's overtime structure is exactly as
+    // editable as its regulation one, which is the point.
     case 'ADD_PERIOD': {
       if (state.clock.running || state.log.length > 0 || state.periodIndex !== 0) return state;
       const source = state.periods[action.afterIndex] ?? state.periods[state.periods.length - 1];
-      const period = { label: `Period ${state.periods.length + 1}`, duration_s: source.duration_s, secondary_clock: source.secondary_clock };
+      const period = {
+        label: `Period ${state.periods.length + 1}`,
+        duration_s: source.duration_s,
+        secondary_clock: source.secondary_clock,
+        overtime: source.overtime,
+      };
       const periods = [...state.periods];
       periods.splice(action.afterIndex + 1, 0, period);
       return enterPeriod({ ...state, periods }, 0, now);
@@ -818,12 +809,10 @@ export function matchReducer(state, action) {
       // structure built for one ruleset generally doesn't transfer to another.
       const fresh = createInitialMatchState(state.rulesetId, { now });
       const periods = state.periods;
-      const overtimeDurations = state.overtimeDurations;
       return {
         ...fresh,
         athletes: state.athletes,
         periods,
-        overtimeDurations,
         // fresh's clock was built from the ruleset's own period-0 duration;
         // recompute it from the preserved (possibly resized) period 0.
         clock: createClock(periods[0].duration_s * 1000),

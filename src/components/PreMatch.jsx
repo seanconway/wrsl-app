@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '../../design-system/components/core/Button.jsx';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
 import { RULESETS, ROLE } from '../match/rulesets.js';
@@ -28,6 +28,10 @@ const LEGEND_SWATCH = {
 export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
   const ruleset = selectRuleset(state);
   const periods = selectMatchPeriods(state);
+  // Structural period editing (add/remove/rename) is a distinct mode from
+  // this screen's default view, toggled by one button in the panel header —
+  // duration stays editable either way, unaffected by this toggle.
+  const [editingPeriods, setEditingPeriods] = useState(false);
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: 'var(--sp-9) var(--sp-10)' }}>
@@ -67,21 +71,38 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
           </p>
         </Panel>
 
-        <Panel title="Period structure">
+        <Panel
+          title="Period structure"
+          action={
+            <button
+              type="button"
+              onClick={() => setEditingPeriods((e) => !e)}
+              style={editToggleStyle}
+            >
+              {editingPeriods ? 'Done' : 'Edit'}
+            </button>
+          }
+        >
           <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             {periods.map((p, i) => (
-              // Keyed on index alone, not label: the label is now user-typed
+              // Keyed on index alone, not label: the label is user-typed
               // (RENAME_PERIOD below), and keying on it would remount this
               // input — dropping focus — on every keystroke.
-              <label key={i} style={{ display: 'grid', gap: 4, position: 'relative' }}>
-                {p.overtime ? (
-                  <span className="rr-eyebrow">{p.label} · OT</span>
-                ) : (
+              <div key={i} style={{ display: 'grid', gap: 4, position: 'relative' }}>
+                {/* A competition's overtime structure is exactly as editable
+                    as its regulation one — nothing here distinguishes a
+                    period by where it came from (`p.overtime` is a display
+                    flag elsewhere, not a UI-editing distinction). */}
+                {editingPeriods ? (
                   <input
                     value={p.label}
                     onChange={(e) => dispatch({ type: 'RENAME_PERIOD', index: i, label: e.target.value })}
-                    style={{ ...inputStyle, fontSize: 'var(--fs-13)', padding: '4px 6px', minHeight: 'auto' }}
+                    style={nameInputStyle}
                   />
+                ) : (
+                  <span className="rr-eyebrow" style={nameLabelStyle}>
+                    {p.label}
+                  </span>
                 )}
                 <input
                   type="number"
@@ -95,11 +116,11 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
                 <span className="rr-num" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', color: 'var(--text-muted)' }}>
                   {formatClock(p.duration_s * 1000)}
                 </span>
-                {!p.overtime && (
+                {editingPeriods && (
                   <button
                     type="button"
                     aria-label={`Remove ${p.label}`}
-                    disabled={state.periods.length <= 1}
+                    disabled={periods.length <= 1}
                     onClick={() => dispatch({ type: 'REMOVE_PERIOD', index: i })}
                     style={{
                       position: 'absolute',
@@ -114,36 +135,46 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
                       border: '1px solid var(--border-strong)',
                       borderRadius: '50%',
                       color: 'var(--text-muted)',
-                      cursor: state.periods.length <= 1 ? 'not-allowed' : 'pointer',
-                      opacity: state.periods.length <= 1 ? 0.35 : 1,
+                      cursor: periods.length <= 1 ? 'not-allowed' : 'pointer',
+                      opacity: periods.length <= 1 ? 0.35 : 1,
                     }}
                   >
                     <Icon name="x" size={12} />
                   </button>
                 )}
-              </label>
+              </div>
             ))}
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'ADD_PERIOD', afterIndex: state.periods.length - 1 })}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                minHeight: 'var(--touch-min)',
-                padding: '0 12px',
-                background: 'transparent',
-                border: '1px dashed var(--border-strong)',
-                borderRadius: 'var(--r-2)',
-                color: 'var(--text-body)',
-                fontFamily: 'var(--font-ui)',
-                fontSize: 'var(--fs-13)',
-                cursor: 'pointer',
-              }}
-            >
-              <Icon name="plus" size={16} />
-              Add period
-            </button>
+            {editingPeriods && (
+              // A spacer matching the name field's row, so the button below
+              // lines up with the duration-input row of every other column
+              // rather than floating at the flex line's baseline.
+              <div style={{ display: 'grid', gap: 4 }}>
+                <span aria-hidden="true" style={{ ...nameInputStyle, visibility: 'hidden' }}>
+                  &nbsp;
+                </span>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'ADD_PERIOD', afterIndex: periods.length - 1 })}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    minHeight: 'var(--touch-min)',
+                    padding: '0 12px',
+                    background: 'transparent',
+                    border: '1px dashed var(--border-strong)',
+                    borderRadius: 'var(--r-2)',
+                    color: 'var(--text-body)',
+                    fontFamily: 'var(--font-ui)',
+                    fontSize: 'var(--fs-13)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Icon name="plus" size={16} />
+                  Add period
+                </button>
+              </div>
+            )}
           </div>
         </Panel>
 
@@ -287,6 +318,43 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
   );
 }
 
+// Fixed so the name field's row is the same height whether it's showing the
+// read-only label or the rename input — that identical height is also what
+// the "Add period" control's hidden spacer (below) matches against, which is
+// what keeps every column's duration-input row aligned in edit mode.
+const PERIOD_NAME_ROW_HEIGHT = 24;
+
+const nameInputStyle = {
+  background: 'var(--surface-sunken)',
+  border: '1px solid var(--border-strong)',
+  color: 'var(--text-strong)',
+  fontFamily: 'var(--font-ui)',
+  fontSize: 'var(--fs-13)',
+  padding: '2px 6px',
+  borderRadius: 'var(--r-2)',
+  height: PERIOD_NAME_ROW_HEIGHT,
+  boxSizing: 'border-box',
+};
+
+const nameLabelStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: PERIOD_NAME_ROW_HEIGHT,
+};
+
+const editToggleStyle = {
+  minHeight: 'var(--touch-min)',
+  padding: '0 14px',
+  background: 'transparent',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--r-2)',
+  color: 'var(--text-body)',
+  fontFamily: 'var(--font-ui)',
+  fontSize: 'var(--fs-13)',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
+
 const inputStyle = {
   background: 'var(--surface-sunken)',
   border: '1px solid var(--border-strong)',
@@ -298,7 +366,7 @@ const inputStyle = {
   minHeight: 'var(--touch-min)',
 };
 
-function Panel({ title, children }) {
+function Panel({ title, action, children }) {
   return (
     <section
       style={{
@@ -307,9 +375,12 @@ function Panel({ title, children }) {
         padding: 'var(--sp-6)',
       }}
     >
-      <h2 className="rr-eyebrow" style={{ marginBottom: 'var(--sp-5)', fontSize: 'var(--fs-13)' }}>
-        {title}
-      </h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--sp-5)' }}>
+        <h2 className="rr-eyebrow" style={{ fontSize: 'var(--fs-13)' }}>
+          {title}
+        </h2>
+        {action}
+      </div>
       {children}
     </section>
   );

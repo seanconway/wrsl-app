@@ -557,12 +557,29 @@ describe('period structure (pre-match)', () => {
     expect(matchReducer(running, { type: 'RENAME_PERIOD', index: 0, label: 'x', now: t })).toBe(running);
   });
 
-  it('routes SET_PERIOD_DURATION across the regulation/overtime split', () => {
-    let s = fresh('ncaa'); // 3 regulation + 4 overtime (folkstyleOvertime)
+  it('sets an overtime-positioned period duration without disturbing others', () => {
+    let s = fresh('ncaa'); // 3 regulation + 4 overtime (folkstyleOvertime), one flat list
     s = matchReducer(s, { type: 'SET_PERIOD_DURATION', index: 3, seconds: 90, now: t }); // index 3 = first overtime round (SV)
     expect(selectPeriodDuration(s, 3)).toBe(90);
-    expect(s.overtimeDurations[0]).toBe(90);
+    expect(s.periods[3].overtime).toBe(true);
     expect(s.periods[0].duration_s).toBe(180); // unaffected regulation P1
+  });
+
+  it('treats overtime periods identically to regulation ones — renamable, removable, and a valid insertion point', () => {
+    let s = fresh('ncaa'); // periods: P1,P2,P3,SV,TB1,TB2,UTB
+    const overtimeCountBefore = s.periods.length - 3;
+
+    s = matchReducer(s, { type: 'RENAME_PERIOD', index: 3, label: 'Sudden Victory', now: t });
+    expect(s.periods[3].label).toBe('Sudden Victory');
+
+    s = matchReducer(s, { type: 'REMOVE_PERIOD', index: 6, now: t }); // removes UTB
+    expect(s.periods.length).toBe(3 + overtimeCountBefore - 1);
+    expect(s.periods.some((p) => p.label === 'UTB')).toBe(false);
+
+    s = matchReducer(s, { type: 'ADD_PERIOD', afterIndex: 3, now: t }); // insert after Sudden Victory
+    expect(s.periods.length).toBe(3 + overtimeCountBefore);
+    expect(s.periods[4].overtime).toBe(true); // cloned the overtime flag from its source
+    expect(s.periods[4].duration_s).toBe(s.periods[3].duration_s);
   });
 
   it('an added period is reachable via navigation with its own duration and secondary-clock cascade', () => {
