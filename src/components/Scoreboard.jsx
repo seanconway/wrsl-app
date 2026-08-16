@@ -522,10 +522,13 @@ function RidingTimeReadout({ label, differential, owner, accruing }) {
  * the caller to `!state.clock.running` — while live, `editable` is false and
  * this renders exactly the plain read-only value it always has, so INPUT
  * gestures remain the only way to change either during play (CLAUDE.md
- * §4.2). While halted, the idle value gets a dashed affordance whose
- * PRESENCE signals it's editable — there is nothing to silently no-op on.
- * Editing swaps the number for an input in the same visual slot rather than
- * a popover, so nothing scrolls or reflows around it.
+ * §4.2). While halted, the idle value is clickable with no visual affordance
+ * beyond the cursor — the display stays identical to live play until
+ * touched. Editing swaps the number for an input in the same visual slot
+ * rather than a popover, so nothing scrolls or reflows around it. The
+ * native number-input spin buttons are suppressed (`rr-no-spinner`, index.css)
+ * — they imply a stepper, which this isn't; ADD_POINT/REMOVE_POINT already
+ * own that via the gesture path.
  */
 function EditableValue({ value, editable, inputType, placeholder, style, parse, format, onCommit }) {
   const [editing, setEditing] = React.useState(false);
@@ -556,7 +559,7 @@ function EditableValue({ value, editable, inputType, placeholder, style, parse, 
             startEditing();
           }
         }}
-        style={{ ...style, cursor: 'pointer', outline: '2px dashed var(--border-strong)', outlineOffset: 6 }}
+        style={{ ...style, cursor: 'pointer' }}
       >
         {format(value)}
       </span>
@@ -584,7 +587,7 @@ function EditableValue({ value, editable, inputType, placeholder, style, parse, 
         if (e.key === 'Enter') commit();
         if (e.key === 'Escape') setEditing(false);
       }}
-      className="rr-num"
+      className="rr-num rr-no-spinner"
       style={{
         ...style,
         width: `${Math.max(draft.length, 3) + 1}ch`,

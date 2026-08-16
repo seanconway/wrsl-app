@@ -196,9 +196,12 @@ describe('period navigation', () => {
 
   it('jumps to the last and first period on a hold', () => {
     let s = fresh('ncaa');
-    s = press(s, 'FORWARD', 'GREEN', 'HOLD');
+    s = press(s, 'FORWARD', 'GREEN', 'HOLD', 1000);
     expect(s.periodIndex).toBe(6); // three regulation + four overtime
-    s = press(s, 'BACKWARD', 'GREEN', 'HOLD');
+    // A separate hold well after the first releases — not the combo-hold
+    // reset gesture, which needs both concurrently (matchReducer.js's
+    // isHeldNow/HOLD_RECENCY_MS).
+    s = press(s, 'BACKWARD', 'GREEN', 'HOLD', 2000);
     expect(s.periodIndex).toBe(0);
   });
 
@@ -289,11 +292,13 @@ describe('riding time — count-up polarity', () => {
     let s = fresh('ncaa');
     s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
     s = press(s, 'F1', 'RED', 'PRESS', 1000);
+    // Spaced out well beyond HOLD_RECENCY_MS: five separate, sequential
+    // presses, not the concurrent hold the combo-reset suppression looks for.
     s = press(s, 'FORWARD', 'GREEN', 'HOLD', 61_000); // jump to the last OT period
-    s = press(s, 'BACKWARD', 'GREEN', 'HOLD', 61_000); // back to the first
-    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 61_000);
-    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 61_000);
-    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 61_000); // index 3 = SV
+    s = press(s, 'BACKWARD', 'GREEN', 'HOLD', 62_000); // back to the first
+    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 63_000);
+    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 64_000);
+    s = press(s, 'FORWARD', 'GREEN', 'PRESS', 65_000); // index 3 = SV
 
     expect(s.periodIndex).toBe(3);
     expect(accruedMs(s.secondary.up.RED, 61_000)).toBe(0);
@@ -689,6 +694,27 @@ describe('remote combo-hold reset', () => {
     s = withHold(s, 'RED', [1000, 6300], [1000, 6300]);
     s = tick(s, 6400);
     expect(s.comboReset.armedAtMono).toBe(6200);
+  });
+
+  it('suppresses the red remote clock nudge while both buttons are concurrently held', () => {
+    let s = fresh('ncaa'); // P1 duration 180s
+    s = press(s, 'FORWARD', 'RED', 'HOLD', 1000); // lone hold — still acts
+    expect(selectClockMs(s, 1000)).toBe(179_000);
+
+    s = press(s, 'BACKWARD', 'RED', 'HOLD', 1100); // FORWARD still recently held — suppressed
+    expect(selectClockMs(s, 1100)).toBe(179_000); // not nudged back to 180_000
+
+    s = press(s, 'FORWARD', 'RED', 'HOLD_REP', 1250); // still concurrent — suppressed
+    expect(selectClockMs(s, 1250)).toBe(179_000);
+  });
+
+  it('suppresses green-remote period navigation the same way', () => {
+    let s = fresh('ncaa');
+    s = press(s, 'FORWARD', 'GREEN', 'HOLD', 1000); // lone hold — jumps to the last period
+    expect(s.periodIndex).toBe(6);
+
+    s = press(s, 'BACKWARD', 'GREEN', 'HOLD', 1100); // FORWARD still recently held — suppressed
+    expect(s.periodIndex).toBe(6); // not pulled back to the first period
   });
 
   it('RESET_MATCH preserves athletes and the customised period list, and clears comboReset/holdTracking', () => {

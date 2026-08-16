@@ -49,6 +49,21 @@ body,
   font-feature-settings: 'tnum' 1;
 }
 
+/* The scoreboard's click-to-type score field (Scoreboard.jsx) is a plain
+   typed correction, not a stepper — the native up/down spin buttons imply
+   increment/decrement semantics ADD_POINT/REMOVE_POINT already own via the
+   gesture path, and at scoreboard scale they render as a distracting arrow
+   pair on a grey track next to the number. */
+.rr-no-spinner::-webkit-outer-spin-button,
+.rr-no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.rr-no-spinner {
+  -moz-appearance: textfield;
+}
+
 /* Score changes cross-fade while the tile flashes lime at 12%. The number
    itself never slides or counts up: an overshooting score animation looks like
    a mis-registered press. */

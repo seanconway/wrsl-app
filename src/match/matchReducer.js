@@ -500,6 +500,12 @@ function trackHold(state, src, button, gesture, now) {
   };
 }
 
+/** True if a FORWARD/BACKWARD hold-tracking entry represents a button still
+ *  believed held right now — same recency test evaluateComboHold uses. */
+function isHeldNow(entry, now) {
+  return entry != null && now - entry.lastSeen <= HOLD_RECENCY_MS;
+}
+
 function handleInput(state, { button, gesture, src }, now) {
   const tracked = trackHold(state, src, button, gesture, now);
 
@@ -524,13 +530,23 @@ function handleInput(state, { button, gesture, src }, now) {
     // — subtracts from it, and BACKWARD — rewinding — adds to it (FS §5.1).
     // Period navigation is unaffected: FORWARD/BACKWARD still step later/
     // earlier through the period list regardless of clock direction.
+    //
+    // Both suppress their single-button function the instant the OTHER one
+    // is also believed held (combo-hold reset, scoreboard-update): with two
+    // independent ~150ms HOLD_REP streams, a referee holding both to reset
+    // the match would otherwise see the clock (or period) lurch back and
+    // forth for up to 5 seconds while the combo is still arming. holdTracking
+    // is still recorded above regardless — evaluateComboHold needs it — only
+    // the visible per-button effect is held back.
     case 'FORWARD':
+      if (isHeldNow(tracked.holdTracking[src].BACKWARD, now)) return tracked;
       if (src === 'RED') return adjustMainClock(tracked, -CLOCK_ADJUST_MS, now);
       if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(tracked, +1, now);
       if (gesture === 'HOLD') return enterPeriod(tracked, selectPeriodCount(tracked) - 1, now);
       return tracked;
 
     case 'BACKWARD':
+      if (isHeldNow(tracked.holdTracking[src].FORWARD, now)) return tracked;
       if (src === 'RED') return adjustMainClock(tracked, +CLOCK_ADJUST_MS, now);
       if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(tracked, -1, now);
       if (gesture === 'HOLD') return enterPeriod(tracked, 0, now);
