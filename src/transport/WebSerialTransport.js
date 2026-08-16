@@ -62,12 +62,6 @@ export class WebSerialTransport {
     return typeof navigator !== 'undefined' && 'serial' in navigator;
   }
 
-  /** Previously-authorised ports, so reconnect needs no new user gesture (§8). */
-  static async getAuthorizedPorts() {
-    if (!WebSerialTransport.isSupported()) return [];
-    return navigator.serial.getPorts();
-  }
-
   /**
    * Prompts the user to pick a port (first-time grant only).
    *

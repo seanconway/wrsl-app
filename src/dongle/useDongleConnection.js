@@ -47,15 +47,9 @@ export function useDongleConnection(matchState, dispatch) {
   const [debugLog, setDebugLog] = useState([]);
   const [logMessages, setLogMessages] = useState([]);
   const [error, setError] = useState(null);
-  const [hasAuthorizedPort, setHasAuthorizedPort] = useState(false);
   const [debugEnabled, setDebugEnabled] = useState(false);
 
   const isSupported = useMemo(() => WebSerialTransport.isSupported(), []);
-
-  useEffect(() => {
-    if (!isSupported) return;
-    WebSerialTransport.getAuthorizedPorts().then((ports) => setHasAuthorizedPort(ports.length > 0));
-  }, [isSupported]);
 
   const ensureService = useCallback(() => {
     if (serviceRef.current) return serviceRef.current;
@@ -111,11 +105,6 @@ export function useDongleConnection(matchState, dispatch) {
     [ensureService],
   );
 
-  const reconnect = useCallback(async () => {
-    const ports = await WebSerialTransport.getAuthorizedPorts();
-    return connect(ports.length > 0 ? { port: ports[0] } : {});
-  }, [connect]);
-
   const disconnect = useCallback(async () => {
     await serviceRef.current?.disconnect();
   }, []);
@@ -143,11 +132,9 @@ export function useDongleConnection(matchState, dispatch) {
     debugLog,
     logMessages,
     error,
-    hasAuthorizedPort,
     debugEnabled,
     setDebugEnabled,
     connect,
-    reconnect,
     disconnect,
     dropForFault,
     sendRaw,

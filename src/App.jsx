@@ -11,6 +11,7 @@ import OperatorControls from './components/OperatorControls.jsx';
 import PreMatch from './components/PreMatch.jsx';
 import Banner from './components/Banner.jsx';
 import { Icon } from '../design-system/components/core/Icon.jsx';
+import { Button } from '../design-system/components/core/Button.jsx';
 
 export default function App() {
   const [stage, setStage] = useState('prematch'); // prematch | match
@@ -84,6 +85,17 @@ export default function App() {
   const now = monotonicNow();
   const linkDown = dongle.handshakeState !== 'ready' || dongle.isStale;
 
+  // Shown along the bottom bar rather than a top banner (below) — the connect
+  // control that resolves this already lives down there, and a click and its
+  // error belong next to each other.
+  const dongleLinkError = !state.halted && linkDown;
+  const dongleErrorTitle =
+    dongle.handshakeState === 'refused' ? 'Dongle firmware is incompatible.' : 'No link to the dongle.';
+  const dongleErrorDetail =
+    dongle.handshakeState === 'refused'
+      ? 'The dongle speaks a different major protocol version. Update the dongle firmware before using it.'
+      : dongle.error ?? 'The referee remotes cannot reach this scoreboard. The board can still be operated from the controls below.';
+
   if (stage === 'prematch') {
     return (
       <div className="rr-mat" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -135,33 +147,6 @@ export default function App() {
         />
       )}
 
-      {!state.halted && linkDown && (
-        <Banner
-          tone="stop"
-          icon="wifi-off"
-          title={dongle.handshakeState === 'refused' ? 'Dongle firmware is incompatible.' : 'No link to the dongle.'}
-          detail={
-            dongle.handshakeState === 'refused'
-              ? 'The dongle speaks a different major protocol version. Update the dongle firmware before using it.'
-              : dongle.error ?? 'The referee remotes cannot reach this scoreboard. The board can still be operated from the controls below.'
-          }
-          actions={
-            dongle.isSupported && dongle.handshakeState !== 'refused'
-              ? [
-                  {
-                    label: dongle.hasAuthorizedPort ? 'Reconnect' : 'Connect dongle',
-                    // Swallowed deliberately: a cancelled port picker rejects,
-                    // and an unhandled rejection would trip the watchdog and
-                    // drop the link. The operator declining a dialog is not an
-                    // application fault, and the error is already surfaced.
-                    onClick: () => dongle.reconnect().catch(() => {}),
-                  },
-                ]
-              : []
-          }
-        />
-      )}
-
       {!isForeground && (
         <Banner
           tone="warn"
@@ -203,42 +188,84 @@ export default function App() {
 
       <footer
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--sp-5)',
-          padding: 'var(--sp-4) var(--sp-7)',
           borderTop: '1px solid var(--border-hairline)',
+          // Mirrors the top banner's accent trim (Banner.jsx), moved to the
+          // edge facing away from the content — the bottom of the screen —
+          // and in orange rather than the banner's red, so a link-lost strip
+          // down here is never read as belonging to the red corner.
+          borderBottom: dongleLinkError ? '3px solid var(--signal-warn)' : 'none',
         }}
       >
-        <span className="rr-eyebrow">
-          {dongle.identity?.set ? `SET ${dongle.identity.set}` : 'NO SET'} ·{' '}
-          {state.athletes.RED.name || 'RED'} v {state.athletes.GREEN.name || 'GREEN'}
-        </span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--sp-4)' }}>
-          <FooterButton
-            icon={isFullscreen ? 'minimize' : 'maximize'}
-            label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            onClick={toggleFullscreen}
-          />
-          <FooterButton
-            icon="hand"
-            label={controlsOpen ? 'Hide controls' : 'Controls'}
-            onClick={() => setControlsOpen((o) => !o)}
-          />
-          <FooterButton icon="list" label={detailOpen ? 'Hide detail' : 'Detail'} onClick={() => setDetailOpen((o) => !o)} />
-          <FooterButton
-            icon="rotate-ccw"
-            label="New match"
-            onClick={() => {
-              // The replaced match stays recoverable for the rest of the
-              // session (scoreboard-update) — same retention the combo-hold
-              // reset gets, above.
-              history.capture(state, { reason: 'manual' });
-              clearMatch();
-              dispatch({ type: 'RESET_MATCH', now: monotonicNow() });
-              setStage('prematch');
+        {dongleLinkError && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--sp-4)',
+              padding: 'var(--sp-3) var(--sp-7) 0',
             }}
-          />
+          >
+            <Icon name="wifi-off" size={18} color="var(--signal-warn)" />
+            <span style={{ fontSize: 'var(--fs-14)', fontWeight: 600, color: 'var(--text-strong)' }}>
+              {dongleErrorTitle}
+            </span>
+            <span style={{ fontSize: 'var(--fs-13)', color: 'var(--text-muted)' }}>{dongleErrorDetail}</span>
+          </div>
+        )}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--sp-5)',
+            padding: 'var(--sp-4) var(--sp-7)',
+          }}
+        >
+          <span className="rr-eyebrow">
+            {dongle.identity?.set ? `SET ${dongle.identity.set}` : 'NO SET'} ·{' '}
+            {state.athletes.RED.name || 'RED'} v {state.athletes.GREEN.name || 'GREEN'}
+          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
+            <Button
+              size="md"
+              variant={linkDown ? 'primary' : 'secondary'}
+              iconLeft="plug-zap"
+              disabled={!linkDown || !dongle.isSupported}
+              style={{ height: 'var(--touch-min)' }}
+              // Identical to the pre-match "Connect dongle" control — always
+              // opens the port picker. Deliberately not `reconnect()`, which
+              // silently reuses the last authorized port and is a different
+              // operation. Swallowed for the same reason as pre-match: a
+              // cancelled picker is the operator changing their mind, not a
+              // fault, and the error is already surfaced above.
+              onClick={() => dongle.connect().catch(() => {})}
+            >
+              Connect dongle
+            </Button>
+            <FooterButton
+              icon={isFullscreen ? 'minimize' : 'maximize'}
+              label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              onClick={toggleFullscreen}
+            />
+            <FooterButton
+              icon="hand"
+              label={controlsOpen ? 'Hide controls' : 'Controls'}
+              onClick={() => setControlsOpen((o) => !o)}
+            />
+            <FooterButton icon="list" label={detailOpen ? 'Hide detail' : 'Detail'} onClick={() => setDetailOpen((o) => !o)} />
+            <FooterButton
+              icon="rotate-ccw"
+              label="New match"
+              onClick={() => {
+                // The replaced match stays recoverable for the rest of the
+                // session (scoreboard-update) — same retention the combo-hold
+                // reset gets, above.
+                history.capture(state, { reason: 'manual' });
+                clearMatch();
+                dispatch({ type: 'RESET_MATCH', now: monotonicNow() });
+                setStage('prematch');
+              }}
+            />
+          </div>
         </div>
       </footer>
     </div>
