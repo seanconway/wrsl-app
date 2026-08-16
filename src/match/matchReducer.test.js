@@ -601,10 +601,19 @@ describe('period structure (pre-match)', () => {
 });
 
 describe('halted-only direct edits', () => {
-  it('refuses SET_SCORE and SET_CLOCK while the clock runs', () => {
+  it('refuses SET_SCORE, SET_CLOCK and SET_ATHLETE while the clock runs', () => {
     const running = press(fresh('ncaa'), 'TOGGLE_CLOCK', 'RED');
     expect(matchReducer(running, { type: 'SET_SCORE', corner: 'RED', value: 5, now: t })).toBe(running);
     expect(matchReducer(running, { type: 'SET_CLOCK', ms: 1000, now: t })).toBe(running);
+    expect(
+      matchReducer(running, { type: 'SET_ATHLETE', corner: 'RED', value: { name: 'Alex' }, now: t }),
+    ).toBe(running);
+  });
+
+  it('SET_ATHLETE renames a corner while halted', () => {
+    let s = fresh('ncaa');
+    s = matchReducer(s, { type: 'SET_ATHLETE', corner: 'RED', value: { name: 'Alex' }, now: t });
+    expect(s.athletes.RED.name).toBe('Alex');
   });
 
   it('SET_SCORE clamps to ruleset bounds and logs a distinct SCORE_SET entry', () => {
@@ -717,7 +726,7 @@ describe('remote combo-hold reset', () => {
     expect(s.periodIndex).toBe(6); // not pulled back to the first period
   });
 
-  it('RESET_MATCH preserves athletes and the customised period list, and clears comboReset/holdTracking', () => {
+  it('RESET_MATCH reverts athletes to default but preserves the customised period list', () => {
     let s = fresh('ncaa');
     s = matchReducer(s, { type: 'SET_ATHLETE', corner: 'RED', value: { name: 'Alex' }, now: t });
     s = matchReducer(s, { type: 'SET_PERIOD_DURATION', index: 0, seconds: 200, now: t });
@@ -725,11 +734,39 @@ describe('remote combo-hold reset', () => {
     s = tick(s, 6200);
     expect(s.comboReset).not.toBe(null);
 
-    s = matchReducer(s, { type: 'RESET_MATCH', now: t });
-    expect(s.athletes.RED.name).toBe('Alex');
+    // Long after the hold's last-seen — not concurrent with the reset.
+    s = matchReducer(s, { type: 'RESET_MATCH', now: 20_000 });
+    // Names are per-bout, unlike ruleset/period structure — a reset starts
+    // the next bout with default names; the just-replaced match's custom
+    // names live on only in the history snapshot App.jsx captures first.
+    expect(s.athletes.RED.name).toBe('Red');
     expect(s.periods[0].duration_s).toBe(200);
-    expect(selectClockMs(s, t)).toBe(200_000);
+    expect(selectClockMs(s, 20_000)).toBe(200_000);
     expect(s.comboReset).toBe(null);
-    expect(s.holdTracking.RED.FORWARD).toBe(null);
+    expect(s.holdTracking.RED.FORWARD).toBe(null); // stale by reset time — not carried
+  });
+
+  it('carries a still-held button across the reset, re-anchored, so suppression has no gap', () => {
+    let s = fresh('ncaa'); // P1 duration 180s
+    s = withHold(s, 'RED', [1000, 6150], [1000, 6150]); // both still held right up to the reset
+    s = tick(s, 6200);
+    expect(s.comboReset).not.toBe(null);
+
+    s = matchReducer(s, { type: 'RESET_MATCH', now: 6210 }); // fires moments later, hold still fresh
+    expect(s.holdTracking.RED.FORWARD).toEqual({ since: 6210, lastSeen: 6150 });
+    expect(s.holdTracking.RED.BACKWARD).toEqual({ since: 6210, lastSeen: 6150 });
+
+    // No gap: the very next event for one button is still suppressed by the
+    // other's carried-over entry, rather than slipping an unsuppressed nudge
+    // through — the bug this carry-over exists to close.
+    const nudged = press(s, 'FORWARD', 'RED', 'HOLD_REP', 6220);
+    expect(selectClockMs(nudged, 6220)).toBe(180_000);
+
+    // But continuing to hold both must not loop into an immediate second
+    // reset — it needs a full fresh COMBO_HOLD_MS from the re-anchored
+    // `since`, not the original hold's.
+    let after = withHold(s, 'RED', [6210, 6300], [6210, 6300]);
+    after = tick(after, 6400); // only 190ms past the re-anchor
+    expect(after.comboReset).toBe(null);
   });
 });

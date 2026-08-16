@@ -506,6 +506,33 @@ function isHeldNow(entry, now) {
   return entry != null && now - entry.lastSeen <= HOLD_RECENCY_MS;
 }
 
+/**
+ * Carries forward hold-tracking across RESET_MATCH for whichever buttons are
+ * still believed concurrently held at the moment of reset — a referee who
+ * triggered the combo-hold reset is typically still physically holding both
+ * buttons when it fires. Without this, the reset wipes holdTracking to null,
+ * and the very next HOLD_REP for whichever button reports first finds the
+ * other's entry gone and slips one unsuppressed nudge through — read by a
+ * referee as "the clock still moves when I let go."
+ *
+ * `since` is re-anchored to `now` rather than carried verbatim: continuing to
+ * hold both after a reset must require a full fresh COMBO_HOLD_MS before
+ * arming again, or the reset would loop for as long as the hold continues.
+ * Entries that weren't actually recent (e.g. the manual "New match" button,
+ * unrelated to any physical hold) are dropped, matching fresh state.
+ */
+function carryHoldTracking(state, now) {
+  const holdTracking = {};
+  for (const src of CORNERS) {
+    holdTracking[src] = {};
+    for (const button of ['FORWARD', 'BACKWARD']) {
+      const entry = state.holdTracking[src][button];
+      holdTracking[src][button] = isHeldNow(entry, now) ? { since: now, lastSeen: entry.lastSeen } : null;
+    }
+  }
+  return holdTracking;
+}
+
 function handleInput(state, { button, gesture, src }, now) {
   const tracked = trackHold(state, src, button, gesture, now);
 
@@ -703,7 +730,13 @@ export function matchReducer(state, action) {
       return { ...fresh, athletes: state.athletes };
     }
 
-    case 'SET_ATHLETE':
+    case 'SET_ATHLETE': {
+      // Halted only (scoreboard-update) — reachable from the live scoreboard's
+      // click-to-type name plate now, not just PreMatch, so it needs the same
+      // guard as SET_SCORE/SET_CLOCK: never a second path into live match
+      // state (CLAUDE.md §4.2). PreMatch dispatches this too, harmlessly —
+      // the clock is never running there.
+      if (state.clock.running) return state;
       return {
         ...state,
         athletes: {
@@ -712,6 +745,7 @@ export function matchReducer(state, action) {
         },
         updatedAtWall: Date.now(),
       };
+    }
 
     case 'SET_PERIOD_DURATION': {
       // Pre-match customisation only — a running clock is never resized under
@@ -820,18 +854,24 @@ export function matchReducer(state, action) {
     case 'RESET_MATCH': {
       // Serves both the manual "New match" button and the combo-hold path
       // (App.jsx) — exactly one reset transition, consistent with "one path"
-      // applied to INPUT. Preserves athletes and the (possibly customised)
-      // period list, unlike SELECT_RULESET, which deliberately does not: a
-      // structure built for one ruleset generally doesn't transfer to another.
+      // applied to INPUT. Preserves the (possibly customised) period list —
+      // a competition's period/overtime structure spans many bouts — but NOT
+      // athletes: names are per-bout, so a reset reverts them to default the
+      // same as score and clock, and the replaced match's custom names live
+      // on only in the history snapshot App.jsx captures before dispatching
+      // this (scoreboard-update). Unlike periods, SELECT_RULESET already
+      // agrees athletes shouldn't carry across this kind of transition.
       const fresh = createInitialMatchState(state.rulesetId, { now });
       const periods = state.periods;
       return {
         ...fresh,
-        athletes: state.athletes,
         periods,
         // fresh's clock was built from the ruleset's own period-0 duration;
         // recompute it from the preserved (possibly resized) period 0.
         clock: createClock(periods[0].duration_s * 1000),
+        // A button still physically held across the reset keeps suppressing
+        // its single-button function with no gap — see carryHoldTracking.
+        holdTracking: carryHoldTracking(state, now),
       };
     }
 

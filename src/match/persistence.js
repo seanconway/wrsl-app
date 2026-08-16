@@ -109,10 +109,14 @@ export function describeSaved(saved) {
 }
 
 /** True when the saved match looks like a bout in progress rather than a fresh
- *  board someone opened and walked away from. */
+ *  board someone opened and walked away from. Also gates in-session match
+ *  history capture (useMatchHistory.js) — a corner already renamed off its
+ *  "Red"/"Green" default is real work-in-progress the same way a score or a
+ *  log entry is, even before the first point (scoreboard-update). */
 export function isUnfinished(saved) {
   if (!saved) return false;
   const scored = (saved.score?.RED ?? 0) !== 0 || (saved.score?.GREEN ?? 0) !== 0;
   const started = (saved.log?.length ?? 0) > 0;
-  return scored || started;
+  const named = (saved.athletes?.RED?.name ?? 'Red') !== 'Red' || (saved.athletes?.GREEN?.name ?? 'Green') !== 'Green';
+  return scored || started || named;
 }

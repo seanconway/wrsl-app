@@ -215,7 +215,12 @@ function Corner({
           padding: 'var(--sp-4) var(--sp-6)',
         }}
       >
-        <div
+        <EditableValue
+          value={athlete.name}
+          editable={editable}
+          inputType="text"
+          textAlign="left"
+          className="rr-name"
           style={{
             fontFamily: 'var(--font-plate)',
             fontWeight: 800,
@@ -227,10 +232,12 @@ function Corner({
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
+            display: 'block',
           }}
-        >
-          {athlete.name || corner}
-        </div>
+          parse={(raw) => raw}
+          format={(name) => name || corner}
+          onCommit={(name) => dispatch({ type: 'SET_ATHLETE', corner, value: { name }, now: monotonicNow() })}
+        />
         {athlete.team && <div className="rr-eyebrow" style={{ marginTop: 3 }}>{athlete.team}</div>}
       </div>
 
@@ -518,25 +525,38 @@ function RidingTimeReadout({ label, differential, owner, accruing }) {
 }
 
 /**
- * Click-to-type score/clock editing (scoreboard-update), gated `editable` by
- * the caller to `!state.clock.running` — while live, `editable` is false and
- * this renders exactly the plain read-only value it always has, so INPUT
- * gestures remain the only way to change either during play (CLAUDE.md
- * §4.2). While halted, the idle value is clickable with no visual affordance
- * beyond the cursor — the display stays identical to live play until
- * touched. Editing swaps the number for an input in the same visual slot
- * rather than a popover, so nothing scrolls or reflows around it. The
- * native number-input spin buttons are suppressed (`rr-no-spinner`, index.css)
- * — they imply a stepper, which this isn't; ADD_POINT/REMOVE_POINT already
- * own that via the gesture path.
+ * Click-to-type editing (scoreboard-update) for score, clock and — since a
+ * corner name is exactly as much a correction as either — the athlete name
+ * plate. Gated `editable` by the caller to `!state.clock.running` — while
+ * live, `editable` is false and this renders exactly the plain read-only
+ * value it always has, so INPUT gestures remain the only way to change
+ * score/clock during play (CLAUDE.md §4.2); renaming an athlete mid-play is
+ * blocked the same way, for the same reason. While halted, the idle value is
+ * clickable with no visual affordance beyond the cursor — the display stays
+ * identical to live play until touched. Editing swaps the value for an
+ * input in the same visual slot rather than a popover, so nothing scrolls or
+ * reflows around it. The native number-input spin buttons are suppressed
+ * (`rr-no-spinner`, index.css) — they imply a stepper, which this isn't;
+ * ADD_POINT/REMOVE_POINT already own that via the gesture path.
  */
-function EditableValue({ value, editable, inputType, placeholder, style, parse, format, onCommit }) {
+function EditableValue({
+  value,
+  editable,
+  inputType,
+  placeholder,
+  style,
+  parse,
+  format,
+  onCommit,
+  textAlign = 'center',
+  className = 'rr-num',
+}) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState('');
 
   if (!editable) {
     return (
-      <span className="rr-num" style={style}>
+      <span className={className} style={style}>
         {format(value)}
       </span>
     );
@@ -549,7 +569,7 @@ function EditableValue({ value, editable, inputType, placeholder, style, parse, 
     };
     return (
       <span
-        className="rr-num"
+        className={className}
         role="button"
         tabIndex={0}
         onClick={startEditing}
@@ -587,7 +607,7 @@ function EditableValue({ value, editable, inputType, placeholder, style, parse, 
         if (e.key === 'Enter') commit();
         if (e.key === 'Escape') setEditing(false);
       }}
-      className="rr-num rr-no-spinner"
+      className={`${className} rr-no-spinner`}
       style={{
         ...style,
         width: `${Math.max(draft.length, 3) + 1}ch`,
@@ -595,7 +615,7 @@ function EditableValue({ value, editable, inputType, placeholder, style, parse, 
         background: 'transparent',
         border: 'none',
         outline: '2px solid var(--border-strong)',
-        textAlign: 'center',
+        textAlign,
       }}
     />
   );
