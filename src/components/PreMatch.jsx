@@ -83,7 +83,14 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
             </button>
           }
         >
-          <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          {/* Top-aligned: every column's first row (name field or, for the
+              Add-period control, its matching hidden spacer) is the same
+              height, so the duration-input row lines up across all of them
+              regardless of what — if anything — sits below it. Bottom
+              alignment here previously pushed the shorter Add-period column
+              down past the duration row, chasing the formatted-clock text
+              row real columns have and it doesn't. */}
+          <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {periods.map((p, i) => (
               // Keyed on index alone, not label: the label is user-typed
               // (RENAME_PERIOD below), and keying on it would remount this
