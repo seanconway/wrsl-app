@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
 import { Button } from '../../design-system/components/core/Button.jsx';
-import { selectRuleset, selectPeriod } from '../match/matchReducer.js';
+import { selectRuleset, selectPeriod, selectMatchPeriods } from '../match/matchReducer.js';
 import { ROLE, ladderPosition } from '../match/rulesets.js';
-import { formatPadded, accruedMs } from '../match/clock.js';
+import { formatClock, formatPadded, accruedMs, monotonicNow } from '../match/clock.js';
+import { describeSaved } from '../match/persistence.js';
 
 /**
  * The secondary tier (FS §8.4): everything the referee needs at specific
@@ -11,7 +12,7 @@ import { formatPadded, accruedMs } from '../match/clock.js';
  * reduces the primary tier's legibility — which is why it is an overlay panel
  * on one edge rather than a region the scoreboard shares space with.
  */
-export default function DetailPanel({ state, now, dongle, onClose, onSendRaw }) {
+export default function DetailPanel({ state, now, dongle, dispatch, history, onClose, onSendRaw }) {
   const [tab, setTab] = useState('match');
   const ruleset = selectRuleset(state);
 
@@ -39,6 +40,7 @@ export default function DetailPanel({ state, now, dongle, onClose, onSendRaw }) 
         {[
           ['match', 'Match'],
           ['log', 'Action log'],
+          ['history', 'History'],
           ['system', 'System'],
         ].map(([id, label]) => (
           <button
@@ -72,6 +74,7 @@ export default function DetailPanel({ state, now, dongle, onClose, onSendRaw }) 
       <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--sp-6)', minHeight: 0 }}>
         {tab === 'match' && <MatchDetail state={state} ruleset={ruleset} now={now} />}
         {tab === 'log' && <ActionLog state={state} ruleset={ruleset} />}
+        {tab === 'history' && <HistoryDetail state={state} dispatch={dispatch} history={history} />}
         {tab === 'system' && <SystemDetail state={state} dongle={dongle} onSendRaw={onSendRaw} />}
       </div>
     </aside>
@@ -206,6 +209,7 @@ function MatchDetail({ state, ruleset, now }) {
  */
 function ActionLog({ state, ruleset }) {
   const entries = [...state.log].reverse();
+  const periods = selectMatchPeriods(state);
 
   if (entries.length === 0) {
     return <p style={{ fontSize: 'var(--fs-14)', color: 'var(--text-muted)' }}>No actions recorded.</p>;
@@ -232,8 +236,7 @@ function ActionLog({ state, ruleset }) {
             }}
           >
             <span className="rr-num" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', minWidth: 34 }}>
-              {(ruleset.periods[entry.periodIndex] ?? ruleset.overtime[entry.periodIndex - ruleset.periods.length])?.label ??
-                '—'}
+              {periods[entry.periodIndex]?.label ?? '—'}
             </span>
             <span style={{ color: 'var(--text-body)', flex: 1 }}>{describeEntry(entry, ruleset)}</span>
             {entry.grouped && (
@@ -252,6 +255,10 @@ function describeEntry(entry, ruleset) {
   switch (entry.type) {
     case 'SCORE':
       return `${entry.corner} ${entry.value > 0 ? '+' : ''}${entry.value}`;
+    case 'SCORE_SET':
+      return `${entry.corner} set ${entry.from} → ${entry.to}`;
+    case 'CLOCK_SET':
+      return `Clock set → ${formatClock(entry.ms)}`;
     case 'COUNTER':
       return `${entry.corner} ${ruleset[entry.slot].label} → ${entry.value}`;
     case 'FLAG':
@@ -273,6 +280,56 @@ function describeEntry(entry, ruleset) {
     default:
       return entry.type;
   }
+}
+
+/**
+ * In-session match history (scoreboard-update): every match a reset has
+ * replaced, recoverable until explicitly discarded — Restore never removes
+ * the entry it used. Restoring itself captures the *current* match first
+ * (an extension beyond the literal request, applied because it costs
+ * nothing and means Restore is never itself destructive).
+ */
+function HistoryDetail({ state, dispatch, history }) {
+  if (history.entries.length === 0) {
+    return <p style={{ fontSize: 'var(--fs-14)', color: 'var(--text-muted)' }}>No replaced matches this session.</p>;
+  }
+
+  return (
+    <>
+      {[...history.entries].reverse().map((entry) => {
+        const info = describeSaved(entry.snapshot);
+        return (
+          <div
+            key={entry.id}
+            style={{ marginBottom: 'var(--sp-6)', paddingBottom: 'var(--sp-6)', borderBottom: '1px solid var(--border-hairline)' }}
+          >
+            <div style={{ fontSize: 'var(--fs-14)', fontWeight: 600, color: 'var(--text-strong)' }}>
+              {info.red} {info.score.RED} — {info.score.GREEN} {info.green}
+            </div>
+            <div className="rr-eyebrow" style={{ marginTop: 2 }}>
+              {entry.reason === 'combo' ? `Combo-hold reset · ${entry.src}` : 'New match'} ·{' '}
+              {new Date(entry.capturedAtWall).toLocaleTimeString()}
+            </div>
+            <div style={{ marginTop: 'var(--sp-4)', display: 'flex', gap: 'var(--sp-3)' }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  history.capture(state, { reason: 'manual' });
+                  dispatch({ type: 'REHYDRATE', state: entry.snapshot, now: monotonicNow() });
+                }}
+              >
+                Restore
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => history.discard(entry.id)}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 function SystemDetail({ state, dongle, onSendRaw }) {

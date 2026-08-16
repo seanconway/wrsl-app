@@ -1,10 +1,10 @@
 import React from 'react';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
-import { formatClock, formatPadded, formatPaddedCeil, remainingMs } from '../match/clock.js';
+import { formatClock, formatPadded, formatPaddedCeil, parseClockInput, remainingMs, monotonicNow } from '../match/clock.js';
 import {
   selectRuleset,
   selectPeriod,
-  selectPeriodCount,
+  selectMatchPeriods,
   selectDifferential,
   selectSecondaryRemainingMs,
   selectSecondaryAccruing,
@@ -21,7 +21,7 @@ import { ROLE, secondaryClockSlot } from '../match/rulesets.js';
  * Link and battery sit here despite not interesting spectators, because their
  * ABSENCE is what the referee needs to notice immediately and unprompted.
  */
-export default function Scoreboard({ state, now, linkStatus, isStale, handshakeState }) {
+export default function Scoreboard({ state, now, linkStatus, isStale, handshakeState, dispatch }) {
   const ruleset = selectRuleset(state);
   const period = selectPeriod(state);
   const clockMs = remainingMs(state.clock, now);
@@ -31,6 +31,10 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
   const countingDown = ruleset.secondary_clock.polarity === 'count_down';
   const secondaryOwner = state.secondary.owner;
   const accruing = selectSecondaryAccruing(state);
+  // Score and clock become click-to-type only while halted (scoreboard-
+  // update) — live play stays INPUT-gesture-only, so this is never a second
+  // path into running match state (CLAUDE.md §4.2).
+  const editable = !state.clock.running;
   // The folkstyle riding-time differential (count-up) is centred under the
   // main clock with its own holder arrow (FS §6.3); the freestyle/Greco
   // activity clock (count-down) is unaffected and stays beside its owner's
@@ -75,6 +79,8 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
           accruing={accruing}
           secondaryMs={selectSecondaryRemainingMs(state, now)}
           now={now}
+          editable={editable}
+          dispatch={dispatch}
         />
 
         <ClockColumn
@@ -87,6 +93,8 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
           differential={differential}
           secondaryOwner={secondaryOwner}
           accruing={accruing}
+          editable={editable}
+          dispatch={dispatch}
         />
 
         <Corner
@@ -99,6 +107,8 @@ export default function Scoreboard({ state, now, linkStatus, isStale, handshakeS
           accruing={accruing}
           secondaryMs={selectSecondaryRemainingMs(state, now)}
           now={now}
+          editable={editable}
+          dispatch={dispatch}
         />
       </div>
 
@@ -182,6 +192,8 @@ function Corner({
   secondaryOwner,
   accruing,
   secondaryMs,
+  editable,
+  dispatch,
 }) {
   const isRed = corner === 'RED';
   const edge = isRed ? 'var(--athlete-red)' : 'var(--athlete-green)';
@@ -240,8 +252,10 @@ function Corner({
             where legibility matters most. JetBrains Mono's open counters and
             distinct strokes are the "mono or tabular" the design system's own
             content rules call for on scores. */}
-        <span
-          className="rr-num"
+        <EditableValue
+          value={state.score[corner]}
+          editable={editable}
+          inputType="number"
           style={{
             fontFamily: 'var(--font-mono)',
             fontWeight: 800,
@@ -250,9 +264,13 @@ function Corner({
             lineHeight: 0.9,
             color: 'var(--text-strong)',
           }}
-        >
-          {state.score[corner]}
-        </span>
+          parse={(raw) => {
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : null;
+          }}
+          format={(n) => String(n)}
+          onCommit={(n) => dispatch({ type: 'SET_SCORE', corner, value: n, now: monotonicNow() })}
+        />
 
         {showsCountdown && (
           <SecondaryReadout
@@ -344,7 +362,19 @@ function CornerCounters({ state, ruleset, corner }) {
   );
 }
 
-function ClockColumn({ state, clockMs, warnAt, period, showsCentralSecondary, label, differential, secondaryOwner, accruing }) {
+function ClockColumn({
+  state,
+  clockMs,
+  warnAt,
+  period,
+  showsCentralSecondary,
+  label,
+  differential,
+  secondaryOwner,
+  accruing,
+  editable,
+  dispatch,
+}) {
   const running = state.clock.running;
   const warning = clockMs <= warnAt && clockMs > 0;
 
@@ -366,8 +396,11 @@ function ClockColumn({ state, clockMs, warnAt, period, showsCentralSecondary, la
         {period.label}
       </span>
       {/* The live clock does not animate. It ticks. */}
-      <span
-        className="rr-num"
+      <EditableValue
+        value={clockMs}
+        editable={editable}
+        inputType="text"
+        placeholder="M:SS"
         style={{
           fontFamily: 'var(--font-mono)',
           fontWeight: 700,
@@ -376,9 +409,10 @@ function ClockColumn({ state, clockMs, warnAt, period, showsCentralSecondary, la
           lineHeight: 0.92,
           color: warning ? 'var(--signal-stop)' : running ? 'var(--text-strong)' : 'var(--text-muted)',
         }}
-      >
-        {formatClock(clockMs)}
-      </span>
+        parse={parseClockInput}
+        format={formatClock}
+        onCommit={(ms) => dispatch({ type: 'SET_CLOCK', ms, now: monotonicNow() })}
+      />
       <span
         className="rr-eyebrow"
         style={{ color: running ? 'var(--signal-live)' : 'var(--text-muted)', fontSize: 'var(--fs-13)' }}
@@ -483,14 +517,94 @@ function RidingTimeReadout({ label, differential, owner, accruing }) {
   );
 }
 
+/**
+ * Click-to-type score/clock editing (scoreboard-update), gated `editable` by
+ * the caller to `!state.clock.running` — while live, `editable` is false and
+ * this renders exactly the plain read-only value it always has, so INPUT
+ * gestures remain the only way to change either during play (CLAUDE.md
+ * §4.2). While halted, the idle value gets a dashed affordance whose
+ * PRESENCE signals it's editable — there is nothing to silently no-op on.
+ * Editing swaps the number for an input in the same visual slot rather than
+ * a popover, so nothing scrolls or reflows around it.
+ */
+function EditableValue({ value, editable, inputType, placeholder, style, parse, format, onCommit }) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+
+  if (!editable) {
+    return (
+      <span className="rr-num" style={style}>
+        {format(value)}
+      </span>
+    );
+  }
+
+  if (!editing) {
+    const startEditing = () => {
+      setDraft(format(value));
+      setEditing(true);
+    };
+    return (
+      <span
+        className="rr-num"
+        role="button"
+        tabIndex={0}
+        onClick={startEditing}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            startEditing();
+          }
+        }}
+        style={{ ...style, cursor: 'pointer', outline: '2px dashed var(--border-strong)', outlineOffset: 6 }}
+      >
+        {format(value)}
+      </span>
+    );
+  }
+
+  const commit = () => {
+    // Unparseable input cancels rather than guessing at intent (CLAUDE.md
+    // §4.4, applied to free-text here rather than the wire) — revert instead
+    // of committing a best-effort interpretation.
+    const parsed = parse(draft);
+    if (parsed !== null) onCommit(parsed);
+    setEditing(false);
+  };
+
+  return (
+    <input
+      type={inputType}
+      autoFocus
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') setEditing(false);
+      }}
+      className="rr-num"
+      style={{
+        ...style,
+        width: `${Math.max(draft.length, 3) + 1}ch`,
+        maxWidth: '90%',
+        background: 'transparent',
+        border: 'none',
+        outline: '2px solid var(--border-strong)',
+        textAlign: 'center',
+      }}
+    />
+  );
+}
+
 function PeriodStrip({ state }) {
-  const count = selectPeriodCount(state);
+  const periods = selectMatchPeriods(state);
   const ruleset = selectRuleset(state);
-  const periods = [...ruleset.periods, ...ruleset.overtime];
 
   return (
     <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center' }}>
-      {periods.slice(0, count).map((p, i) => (
+      {periods.map((p, i) => (
         <span
           key={`${p.label}-${i}`}
           className="rr-eyebrow"

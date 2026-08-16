@@ -7,6 +7,7 @@ import {
   selectSecondaryRemainingMs,
   selectIndicators,
   selectPeriodDuration,
+  selectMatchPeriods,
   isInertInput,
   NOTIFY,
 } from './matchReducer.js';
@@ -511,5 +512,181 @@ describe('rehydration', () => {
     expect(restored.score.RED).toBe(1);
     expect(restored.secondary.owner).toBe('RED');
     expect(accruedMs(restored.secondary.up.RED, 9_000_000)).toBe(60_000);
+  });
+});
+
+describe('period structure (pre-match)', () => {
+  it('adds, renames and removes a regulation period', () => {
+    let s = fresh('ibjjf'); // single 'Match' period — easiest to reason about
+    expect(s.periods.length).toBe(1);
+
+    s = matchReducer(s, { type: 'ADD_PERIOD', afterIndex: 0, now: t });
+    expect(s.periods.length).toBe(2);
+    expect(s.periods[1].duration_s).toBe(s.periods[0].duration_s); // cloned from source
+
+    s = matchReducer(s, { type: 'RENAME_PERIOD', index: 1, label: 'Overtime period', now: t });
+    expect(s.periods[1].label).toBe('Overtime period');
+
+    s = matchReducer(s, { type: 'REMOVE_PERIOD', index: 0, now: t });
+    expect(s.periods.length).toBe(1);
+    expect(s.periods[0].label).toBe('Overtime period');
+  });
+
+  it('refuses to remove the last remaining period', () => {
+    const s = fresh('ibjjf');
+    const removed = matchReducer(s, { type: 'REMOVE_PERIOD', index: 0, now: t });
+    expect(removed).toBe(s);
+  });
+
+  it('ignores a blank rename', () => {
+    const s = fresh('ibjjf');
+    const renamed = matchReducer(s, { type: 'RENAME_PERIOD', index: 0, label: '   ', now: t });
+    expect(renamed).toBe(s);
+  });
+
+  it('refuses structural edits once the match has stepped, scored, or is running', () => {
+    const s = fresh('ncaa');
+
+    const stepped = press(s, 'FORWARD', 'GREEN');
+    expect(matchReducer(stepped, { type: 'ADD_PERIOD', afterIndex: 0, now: t })).toBe(stepped);
+
+    const scored = press(s, 'ADD_POINT', 'RED');
+    expect(matchReducer(scored, { type: 'REMOVE_PERIOD', index: 0, now: t })).toBe(scored);
+
+    const running = press(s, 'TOGGLE_CLOCK', 'RED');
+    expect(matchReducer(running, { type: 'RENAME_PERIOD', index: 0, label: 'x', now: t })).toBe(running);
+  });
+
+  it('routes SET_PERIOD_DURATION across the regulation/overtime split', () => {
+    let s = fresh('ncaa'); // 3 regulation + 4 overtime (folkstyleOvertime)
+    s = matchReducer(s, { type: 'SET_PERIOD_DURATION', index: 3, seconds: 90, now: t }); // index 3 = first overtime round (SV)
+    expect(selectPeriodDuration(s, 3)).toBe(90);
+    expect(s.overtimeDurations[0]).toBe(90);
+    expect(s.periods[0].duration_s).toBe(180); // unaffected regulation P1
+  });
+
+  it('an added period is reachable via navigation with its own duration and secondary-clock cascade', () => {
+    let s = fresh('uww-freestyle'); // two periods, activityClock, reset_at_start: true
+    s = matchReducer(s, { type: 'ADD_PERIOD', afterIndex: 1, now: t });
+    s = matchReducer(s, { type: 'SET_PERIOD_DURATION', index: 2, seconds: 60, now: t });
+    expect(selectMatchPeriods(s)[2].secondary_clock.reset_at_start).toBe(true);
+
+    s = press(s, 'FORWARD', 'GREEN');
+    s = press(s, 'FORWARD', 'GREEN');
+    expect(s.periodIndex).toBe(2);
+    expect(selectClockMs(s, t)).toBe(60_000);
+  });
+});
+
+describe('halted-only direct edits', () => {
+  it('refuses SET_SCORE and SET_CLOCK while the clock runs', () => {
+    const running = press(fresh('ncaa'), 'TOGGLE_CLOCK', 'RED');
+    expect(matchReducer(running, { type: 'SET_SCORE', corner: 'RED', value: 5, now: t })).toBe(running);
+    expect(matchReducer(running, { type: 'SET_CLOCK', ms: 1000, now: t })).toBe(running);
+  });
+
+  it('SET_SCORE clamps to ruleset bounds and logs a distinct SCORE_SET entry', () => {
+    let s = fresh('ncaa'); // scoring 0..99
+    s = matchReducer(s, { type: 'SET_SCORE', corner: 'RED', value: 150, now: t });
+    expect(s.score.RED).toBe(99);
+    const entry = s.log[s.log.length - 1];
+    expect(entry.type).toBe('SCORE_SET');
+    expect(entry.from).toBe(0);
+    expect(entry.to).toBe(99);
+  });
+
+  it('SET_SCORE is a no-op when the value does not change', () => {
+    const s = fresh('ncaa');
+    expect(matchReducer(s, { type: 'SET_SCORE', corner: 'RED', value: 0, now: t })).toBe(s);
+  });
+
+  it('SET_CLOCK clamps to [0, period duration]', () => {
+    let s = fresh('ncaa');
+    let over = matchReducer(s, { type: 'SET_CLOCK', ms: 999_999, now: t });
+    expect(selectClockMs(over, t)).toBe(180_000);
+    let under = matchReducer(s, { type: 'SET_CLOCK', ms: -500, now: t });
+    expect(selectClockMs(under, t)).toBe(0);
+  });
+
+  it('SET_CLOCK does not cascade to the secondary clock, unlike the gesture path', () => {
+    let s = fresh('ncaa');
+    s = press(s, 'F1', 'RED', 'PRESS', 1000); // assigns riding time to RED
+    s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 1000);
+    s = press(s, 'TOGGLE_CLOCK', 'RED', 'PRESS', 31_000); // stop after 30s accrued
+    expect(accruedMs(s.secondary.up.RED, 31_000)).toBe(30_000);
+
+    s = matchReducer(s, { type: 'SET_CLOCK', ms: 100_000, now: 31_000 });
+    expect(accruedMs(s.secondary.up.RED, 31_000)).toBe(30_000);
+  });
+});
+
+describe('remote combo-hold reset', () => {
+  function withHold(state, src, forward, backward) {
+    return {
+      ...state,
+      holdTracking: {
+        ...state.holdTracking,
+        [src]: {
+          FORWARD: forward ? { since: forward[0], lastSeen: forward[1] } : null,
+          BACKWARD: backward ? { since: backward[0], lastSeen: backward[1] } : null,
+        },
+      },
+    };
+  }
+
+  it('arms comboReset once both buttons have overlapped for 5000ms while halted', () => {
+    let s = fresh('ncaa'); // clock not running
+    s = withHold(s, 'RED', [1000, 5900], [1200, 5900]);
+    s = tick(s, 6200); // overlap start = max(1000, 1200) = 1200; 6200 - 1200 = 5000
+    expect(s.comboReset).toEqual({ src: 'RED', armedAtMono: 6200 });
+  });
+
+  it('does not arm before the threshold', () => {
+    let s = fresh('ncaa');
+    s = withHold(s, 'RED', [1000, 5300], [1000, 5300]);
+    s = tick(s, 5300); // overlap only 4300ms
+    expect(s.comboReset).toBe(null);
+  });
+
+  it('does not arm while the clock is running', () => {
+    let s = press(fresh('ncaa'), 'TOGGLE_CLOCK', 'RED', 'PRESS', 500);
+    s = withHold(s, 'RED', [1000, 5900], [1000, 5900]);
+    s = tick(s, 6200);
+    expect(s.comboReset).toBe(null);
+  });
+
+  it('clears a stale hold entry beyond HOLD_RECENCY_MS', () => {
+    let s = fresh('ncaa');
+    s = withHold(s, 'RED', [1000, 1000], [1000, 1000]);
+    s = tick(s, 2000); // 1000ms since last seen — presumed released
+    expect(s.holdTracking.RED.FORWARD).toBe(null);
+    expect(s.holdTracking.RED.BACKWARD).toBe(null);
+  });
+
+  it('is a one-shot latch — armedAtMono does not creep forward while the hold continues', () => {
+    let s = fresh('ncaa');
+    s = withHold(s, 'RED', [1000, 5900], [1000, 5900]);
+    s = tick(s, 6200);
+    expect(s.comboReset.armedAtMono).toBe(6200);
+
+    s = withHold(s, 'RED', [1000, 6300], [1000, 6300]);
+    s = tick(s, 6400);
+    expect(s.comboReset.armedAtMono).toBe(6200);
+  });
+
+  it('RESET_MATCH preserves athletes and the customised period list, and clears comboReset/holdTracking', () => {
+    let s = fresh('ncaa');
+    s = matchReducer(s, { type: 'SET_ATHLETE', corner: 'RED', value: { name: 'Alex' }, now: t });
+    s = matchReducer(s, { type: 'SET_PERIOD_DURATION', index: 0, seconds: 200, now: t });
+    s = withHold(s, 'RED', [1000, 5900], [1000, 5900]);
+    s = tick(s, 6200);
+    expect(s.comboReset).not.toBe(null);
+
+    s = matchReducer(s, { type: 'RESET_MATCH', now: t });
+    expect(s.athletes.RED.name).toBe('Alex');
+    expect(s.periods[0].duration_s).toBe(200);
+    expect(selectClockMs(s, t)).toBe(200_000);
+    expect(s.comboReset).toBe(null);
+    expect(s.holdTracking.RED.FORWARD).toBe(null);
   });
 });

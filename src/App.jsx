@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMatch } from './match/useMatch.js';
+import { useMatchHistory } from './match/useMatchHistory.js';
 import { useWatchdog } from './match/useWatchdog.js';
 import { useDongleConnection } from './dongle/useDongleConnection.js';
 import { monotonicNow, formatClock } from './match/clock.js';
@@ -50,6 +51,26 @@ export default function App() {
   const { state, dispatch, restorable, restoreMatch, discardRestorable, isForeground } = useMatch({
     onTick: () => stampRef.current(),
   });
+
+  const history = useMatchHistory();
+
+  // Held in a ref so the combo-hold effect below can read the match state at
+  // the moment it fires without listing the whole (every-tick-changing)
+  // `state` object as a dependency — same reasoning as useMatch.js's own
+  // stateRef.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  // Remote combo-hold reset (scoreboard-update): the reducer only detects and
+  // flags `comboReset` (matchReducer.js's evaluateComboHold) — this effect is
+  // what actually performs the reset, snapshotting the replaced match into
+  // session history first so it stays recoverable, same as the manual "New
+  // match" button below.
+  useEffect(() => {
+    if (!state.comboReset) return;
+    history.capture(stateRef.current, { reason: 'combo', src: state.comboReset.src });
+    dispatch({ type: 'RESET_MATCH', now: monotonicNow() });
+  }, [state.comboReset, dispatch, history]);
 
   const dongle = useDongleConnection(state, dispatch);
 
@@ -159,6 +180,7 @@ export default function App() {
               linkStatus={dongle.linkStatus}
               isStale={dongle.isStale}
               handshakeState={dongle.handshakeState}
+              dispatch={dispatch}
             />
           </div>
           {controlsOpen && (
@@ -171,6 +193,8 @@ export default function App() {
             state={state}
             now={now}
             dongle={dongle}
+            dispatch={dispatch}
+            history={history}
             onClose={() => setDetailOpen(false)}
             onSendRaw={dongle.sendRaw}
           />
@@ -206,8 +230,10 @@ export default function App() {
             icon="rotate-ccw"
             label="New match"
             onClick={() => {
-              // Reset is a scoreboard action, never a wrist one. The remotes are
-              // used only during match operation (FS §12.4).
+              // The replaced match stays recoverable for the rest of the
+              // session (scoreboard-update) — same retention the combo-hold
+              // reset gets, above.
+              history.capture(state, { reason: 'manual' });
               clearMatch();
               dispatch({ type: 'RESET_MATCH', now: monotonicNow() });
               setStage('prematch');

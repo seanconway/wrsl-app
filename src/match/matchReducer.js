@@ -23,12 +23,22 @@ import {
   adjustAccrual,
   reanchor,
 } from './clock.js';
-import { ROLE, getRuleset, allPeriods, periodAt, functionSlot, secondaryClockSlot, phaseIndexAt } from './rulesets.js';
+import { ROLE, getRuleset, functionSlot, secondaryClockSlot, phaseIndexAt } from './rulesets.js';
 
-export const MATCH_STATE_VERSION = 3;
+export const MATCH_STATE_VERSION = 4;
 
 const CORNERS = ['RED', 'GREEN'];
 const CLOCK_ADJUST_MS = 1000;
+
+// Remote combo-hold reset (FS/PLAN scoreboard-update). The user's specified
+// hold duration, and the one explicit, bounded guess this app-level-only
+// detection requires: the wire has no "released" event, only a HOLD_REP
+// stream that stops arriving, so "still held" is inferred from recency.
+const COMBO_HOLD_MS = 5000;
+// ~2.5x useGesture.js's 150ms HOLD_REP interval — survives one dropped
+// repeat without mistaking a live hold for a release. Restated, not
+// imported: match/ does not depend on components/.
+const HOLD_RECENCY_MS = 400;
 
 
 /** Notification kinds. The mapping to haptic waveforms lives in the dongle
@@ -48,7 +58,6 @@ let outboxSeq = 0;
 
 export function createInitialMatchState(rulesetId, { now = 0, wallNow = Date.now() } = {}) {
   const ruleset = getRuleset(rulesetId);
-  const periods = allPeriods(ruleset);
   const secondary = ruleset.secondary_clock;
 
   return {
@@ -59,14 +68,28 @@ export function createInitialMatchState(rulesetId, { now = 0, wallNow = Date.now
       GREEN: { name: 'Green', team: '' },
     },
     periodIndex: 0,
-    // Durations are copied out of the ruleset rather than read through it, so
-    // state, league and rules-cycle variation is a pre-match settings edit
-    // rather than a fork of the ruleset (FS §12.1).
-    periodDurations: periods.map((p) => p.duration_s),
-    clock: createClock(periods[0].duration_s * 1000),
+    // Regulation periods are copied out of the ruleset rather than read
+    // through it, so state, league and rules-cycle variation is a pre-match
+    // settings edit rather than a fork of the ruleset (FS §12.1). Each entry
+    // carries its own secondary_clock rather than being re-derived from the
+    // ruleset by index, so a structural edit (add/remove/rename) never causes
+    // a surviving period to inherit another one's cascade rule by index
+    // shift. Overtime is not structurally editable — only its duration is,
+    // via overtimeDurations — so it stays a plain array of overrides.
+    periods: ruleset.periods.map((p) => ({ label: p.label, duration_s: p.duration_s, secondary_clock: p.secondary_clock })),
+    overtimeDurations: ruleset.overtime.map((p) => p.duration_s),
+    clock: createClock(ruleset.periods[0].duration_s * 1000),
     score: { RED: 0, GREEN: 0 },
     counters: { RED: { f1: 0, f2: 0 }, GREEN: { f1: 0, f2: 0 } },
     flags: { f1: null, f2: null },
+    // Per-remote FORWARD/BACKWARD hold tracking for the combo-hold reset
+    // gesture (handleInput/TICK below) — null when the button isn't
+    // currently believed held.
+    holdTracking: {
+      RED: { FORWARD: null, BACKWARD: null },
+      GREEN: { FORWARD: null, BACKWARD: null },
+    },
+    comboReset: null,
     secondary: {
       owner: null,
       // count_up: one accumulator per athlete, and the differential is what is
@@ -94,18 +117,39 @@ export function selectRuleset(state) {
   return getRuleset(state.rulesetId);
 }
 
+/** The match's own ordered period list: the (possibly user-customised, FS
+ *  §12.1) regulation periods followed by the ruleset's fixed-structure
+ *  overtime rounds with their duration overrides applied. The one list the
+ *  reducer and UI treat a period and an overtime round identically through —
+ *  nothing in the input model distinguishes them. */
+export function selectMatchPeriods(state) {
+  const ruleset = selectRuleset(state);
+  return [
+    ...state.periods.map((p) => ({ ...p, overtime: false })),
+    ...ruleset.overtime.map((p, i) => ({
+      label: p.label,
+      duration_s: state.overtimeDurations[i] ?? p.duration_s,
+      secondary_clock: p.secondary_clock,
+      type: p.type,
+      overtime: true,
+    })),
+  ];
+}
+
 export function selectPeriod(state) {
-  return periodAt(selectRuleset(state), state.periodIndex);
+  const periods = selectMatchPeriods(state);
+  return periods[Math.min(Math.max(state.periodIndex, 0), periods.length - 1)];
 }
 
 export function selectPeriodCount(state) {
-  return allPeriods(selectRuleset(state)).length;
+  return selectMatchPeriods(state).length;
 }
 
 /** Configured duration of a period in seconds, honouring pre-match overrides. */
 export function selectPeriodDuration(state, index = state.periodIndex) {
-  const fallback = periodAt(selectRuleset(state), index).duration_s;
-  return state.periodDurations?.[index] ?? fallback;
+  const periods = selectMatchPeriods(state);
+  const clamped = Math.min(Math.max(index, 0), periods.length - 1);
+  return periods[clamped].duration_s;
 }
 
 export function selectClockMs(state, now) {
@@ -234,14 +278,14 @@ function syncAccrual(state, now) {
  *  secondary clock does at that boundary. */
 function enterPeriod(state, index, now) {
   const ruleset = selectRuleset(state);
-  const periods = allPeriods(ruleset);
+  const periods = selectMatchPeriods(state);
   const clamped = Math.min(Math.max(index, 0), periods.length - 1);
   const period = periods[clamped];
 
   let next = {
     ...state,
     periodIndex: clamped,
-    clock: createClock(selectPeriodDuration(state, clamped) * 1000),
+    clock: createClock(period.duration_s * 1000),
     warningFired: false,
     phaseIndex: ruleset.phases.length > 0 ? 0 : -1,
   };
@@ -442,18 +486,40 @@ function handleFunctionButton(state, slot, corner, gesture, now) {
   }
 }
 
+/**
+ * Records FORWARD/BACKWARD hold state per remote, for the combo-hold reset
+ * gesture (TICK's evaluateComboHold, below). A no-op — returns `state`
+ * unchanged — for every other button/gesture, so folding this into the front
+ * of handleInput is free for the paths that don't care about it.
+ */
+function trackHold(state, src, button, gesture, now) {
+  if (button !== 'FORWARD' && button !== 'BACKWARD') return state;
+  if (gesture !== 'HOLD' && gesture !== 'HOLD_REP') return state;
+  const current = state.holdTracking[src][button];
+  const since = gesture === 'HOLD' ? now : (current?.since ?? now);
+  return {
+    ...state,
+    holdTracking: {
+      ...state.holdTracking,
+      [src]: { ...state.holdTracking[src], [button]: { since, lastSeen: now } },
+    },
+  };
+}
+
 function handleInput(state, { button, gesture, src }, now) {
+  const tracked = trackHold(state, src, button, gesture, now);
+
   switch (button) {
     case 'TOGGLE_CLOCK':
-      if (gesture === 'PRESS') return toggleMainClock(state, now);
-      if (gesture === 'HOLD') return resetPeriodClock(state, now);
-      return state;
+      if (gesture === 'PRESS') return toggleMainClock(tracked, now);
+      if (gesture === 'HOLD') return resetPeriodClock(tracked, now);
+      return tracked;
 
     case 'ADD_POINT':
-      return gesture === 'PRESS' ? changeScore(state, src, +1, now) : state;
+      return gesture === 'PRESS' ? changeScore(tracked, src, +1, now) : tracked;
 
     case 'REMOVE_POINT':
-      return gesture === 'PRESS' ? changeScore(state, src, -1, now) : state;
+      return gesture === 'PRESS' ? changeScore(tracked, src, -1, now) : tracked;
 
     // Clock adjustment on the red remote, period navigation on the green, so
     // two similar navigation functions do not compete for the same finger
@@ -465,25 +531,25 @@ function handleInput(state, { button, gesture, src }, now) {
     // Period navigation is unaffected: FORWARD/BACKWARD still step later/
     // earlier through the period list regardless of clock direction.
     case 'FORWARD':
-      if (src === 'RED') return adjustMainClock(state, -CLOCK_ADJUST_MS, now);
-      if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(state, +1, now);
-      if (gesture === 'HOLD') return enterPeriod(state, selectPeriodCount(state) - 1, now);
-      return state;
+      if (src === 'RED') return adjustMainClock(tracked, -CLOCK_ADJUST_MS, now);
+      if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(tracked, +1, now);
+      if (gesture === 'HOLD') return enterPeriod(tracked, selectPeriodCount(tracked) - 1, now);
+      return tracked;
 
     case 'BACKWARD':
-      if (src === 'RED') return adjustMainClock(state, +CLOCK_ADJUST_MS, now);
-      if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(state, -1, now);
-      if (gesture === 'HOLD') return enterPeriod(state, 0, now);
-      return state;
+      if (src === 'RED') return adjustMainClock(tracked, +CLOCK_ADJUST_MS, now);
+      if (gesture === 'PRESS' || gesture === 'HOLD_REP') return stepPeriod(tracked, -1, now);
+      if (gesture === 'HOLD') return enterPeriod(tracked, 0, now);
+      return tracked;
 
     case 'F1':
-      return handleFunctionButton(state, 'f1', src, gesture, now);
+      return handleFunctionButton(tracked, 'f1', src, gesture, now);
 
     case 'F2':
-      return handleFunctionButton(state, 'f2', src, gesture, now);
+      return handleFunctionButton(tracked, 'f2', src, gesture, now);
 
     default:
-      return state;
+      return tracked;
   }
 }
 
@@ -543,6 +609,47 @@ function advanceClocks(state, now) {
   return next;
 }
 
+/**
+ * Clears stale FORWARD/BACKWARD hold entries (nothing arrived within
+ * HOLD_RECENCY_MS, so the button is presumed released) and arms `comboReset`
+ * once both have been continuously held on one remote for COMBO_HOLD_MS.
+ *
+ * Evaluated only while the match is not being timed live — arming never
+ * fires with `state.clock.running`, mirroring the halted-only guard on
+ * SET_SCORE/SET_CLOCK, so an accidental dual-hold mid-match does nothing.
+ * Hold tracking itself still updates regardless (harmless bookkeeping),
+ * so a hold that started live and continues into a stoppage is honoured.
+ *
+ * One-shot: only sets `comboReset` while it is currently null, so it does
+ * not creep forward while the referee keeps holding past the threshold.
+ * Preserves TICK's "same object when nothing changed" contract.
+ */
+function evaluateComboHold(state, now) {
+  const holdTracking = {};
+  let changed = false;
+  for (const src of CORNERS) {
+    const entry = state.holdTracking[src];
+    const forward = entry.FORWARD && now - entry.FORWARD.lastSeen <= HOLD_RECENCY_MS ? entry.FORWARD : null;
+    const backward = entry.BACKWARD && now - entry.BACKWARD.lastSeen <= HOLD_RECENCY_MS ? entry.BACKWARD : null;
+    if (forward !== entry.FORWARD || backward !== entry.BACKWARD) changed = true;
+    holdTracking[src] = { FORWARD: forward, BACKWARD: backward };
+  }
+
+  let comboReset = state.comboReset;
+  if (comboReset === null && !state.clock.running) {
+    for (const src of CORNERS) {
+      const { FORWARD, BACKWARD } = holdTracking[src];
+      if (FORWARD && BACKWARD && now - Math.max(FORWARD.since, BACKWARD.since) >= COMBO_HOLD_MS) {
+        comboReset = { src, armedAtMono: now };
+        break;
+      }
+    }
+  }
+
+  if (!changed && comboReset === state.comboReset) return state;
+  return { ...state, holdTracking, comboReset };
+}
+
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
@@ -578,7 +685,7 @@ export function matchReducer(state, action) {
       // separately, and conflating the two would put a fresh object through
       // every consumer ten times a second for nothing.
       if (state.halted) return state;
-      return advanceClocks(state, now);
+      return evaluateComboHold(advanceClocks(state, now), now);
     }
 
     case 'SELECT_RULESET': {
@@ -598,12 +705,83 @@ export function matchReducer(state, action) {
 
     case 'SET_PERIOD_DURATION': {
       // Pre-match customisation only — a running clock is never resized under
-      // the referee.
+      // the referee. Same flat 0..N-1 index the UI has always dispatched;
+      // routed to regulation or overtime beneath it.
       if (state.clock.running) return state;
-      const periodDurations = [...state.periodDurations];
-      periodDurations[action.index] = Math.max(1, Math.round(action.seconds));
-      const next = { ...state, periodDurations };
+      const seconds = Math.max(1, Math.round(action.seconds));
+      let next;
+      if (action.index < state.periods.length) {
+        const periods = [...state.periods];
+        periods[action.index] = { ...periods[action.index], duration_s: seconds };
+        next = { ...state, periods };
+      } else {
+        const overtimeDurations = [...state.overtimeDurations];
+        overtimeDurations[action.index - state.periods.length] = seconds;
+        next = { ...state, overtimeDurations };
+      }
       return action.index === state.periodIndex ? enterPeriod(next, state.periodIndex, now) : next;
+    }
+
+    // Structural period-list edits (FS §12.1 / scoreboard-update). Pre-match
+    // only, and stricter than SET_PERIOD_DURATION's clock-running-only guard:
+    // adding, removing or reordering periods the match has already stepped
+    // through is semantically incoherent in a way resizing a duration isn't,
+    // so nothing may have happened yet. Overtime is excluded — its fixed
+    // count/order carries real meaning (folkstyle SV/TB1/TB2/UTB) that
+    // add/remove would break; only its duration is editable, above.
+    case 'ADD_PERIOD': {
+      if (state.clock.running || state.log.length > 0 || state.periodIndex !== 0) return state;
+      const source = state.periods[action.afterIndex] ?? state.periods[state.periods.length - 1];
+      const period = { label: `Period ${state.periods.length + 1}`, duration_s: source.duration_s, secondary_clock: source.secondary_clock };
+      const periods = [...state.periods];
+      periods.splice(action.afterIndex + 1, 0, period);
+      return enterPeriod({ ...state, periods }, 0, now);
+    }
+
+    case 'REMOVE_PERIOD': {
+      if (state.clock.running || state.log.length > 0 || state.periodIndex !== 0) return state;
+      if (state.periods.length <= 1) return state;
+      const periods = state.periods.filter((_, i) => i !== action.index);
+      return enterPeriod({ ...state, periods }, 0, now);
+    }
+
+    case 'RENAME_PERIOD': {
+      if (state.clock.running || state.log.length > 0 || state.periodIndex !== 0) return state;
+      const label = action.label.trim();
+      if (!label) return state;
+      const periods = [...state.periods];
+      periods[action.index] = { ...periods[action.index], label };
+      return { ...state, periods };
+    }
+
+    // Direct score/clock entry (scoreboard-update). Halted only — same guard
+    // as SET_PERIOD_DURATION — so this is never a second path into live
+    // match state (CLAUDE.md §4.2): while the clock runs, INPUT gestures
+    // remain the only way to change either.
+    case 'SET_SCORE': {
+      if (state.clock.running) return state;
+      const { min, max } = selectRuleset(state).scoring;
+      const from = state.score[action.corner];
+      const to = Math.min(Math.max(Math.round(action.value), min), max);
+      if (to === from) return state;
+      const next = { ...state, score: { ...state.score, [action.corner]: to } };
+      // A distinct log entry, not 'SCORE' — appendScoringAction's grouping
+      // (FS §4.3) is specific to gesture-driven presses, and freestyle
+      // tiebreak criteria turn on the value of a single technical action. A
+      // typed correction must never be conflatable with one.
+      return logEntry(next, { type: 'SCORE_SET', corner: action.corner, from, to }, now);
+    }
+
+    case 'SET_CLOCK': {
+      if (state.clock.running) return state;
+      const maxMs = selectPeriodDuration(state) * 1000;
+      const ms = Math.min(Math.max(Math.round(action.ms), 0), maxMs);
+      const next = { ...state, clock: { remainingMs: ms, running: false, refMono: null } };
+      // Unlike adjustMainClock's FORWARD/BACKWARD path, this does not cascade
+      // to the secondary clock: that cascade is delta-based (the interval
+      // being corrected was one the secondary clock was also live for), and a
+      // typed absolute value has no delta to propagate. Accepted asymmetry.
+      return logEntry(next, { type: 'CLOCK_SET', ms }, now);
     }
 
     case 'HALT':
@@ -632,8 +810,25 @@ export function matchReducer(state, action) {
     case 'OUTBOX_SENT':
       return { ...state, outbox: state.outbox.filter((n) => !action.ids.includes(n.id)) };
 
-    case 'RESET_MATCH':
-      return createInitialMatchState(state.rulesetId, { now });
+    case 'RESET_MATCH': {
+      // Serves both the manual "New match" button and the combo-hold path
+      // (App.jsx) — exactly one reset transition, consistent with "one path"
+      // applied to INPUT. Preserves athletes and the (possibly customised)
+      // period list, unlike SELECT_RULESET, which deliberately does not: a
+      // structure built for one ruleset generally doesn't transfer to another.
+      const fresh = createInitialMatchState(state.rulesetId, { now });
+      const periods = state.periods;
+      const overtimeDurations = state.overtimeDurations;
+      return {
+        ...fresh,
+        athletes: state.athletes,
+        periods,
+        overtimeDurations,
+        // fresh's clock was built from the ruleset's own period-0 duration;
+        // recompute it from the preserved (possibly resized) period 0.
+        clock: createClock(periods[0].duration_s * 1000),
+      };
+    }
 
     case 'REHYDRATE': {
       // A restored match arrives with monotonic references from a previous page
@@ -658,6 +853,14 @@ export function matchReducer(state, action) {
         halted: null,
         lastInputMono: null,
         lastNow: now,
+        // Hold timestamps from a previous page lifetime's monotonic origin
+        // mean nothing against a fresh `now` — same reasoning as the clocks
+        // above, just for the combo-hold gesture rather than match time.
+        holdTracking: {
+          RED: { FORWARD: null, BACKWARD: null },
+          GREEN: { FORWARD: null, BACKWARD: null },
+        },
+        comboReset: null,
       };
     }
 

@@ -155,6 +155,27 @@ export function formatClock(ms) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/**
+ * Inverse of formatClock()/formatPadded() — `M:SS`, `MM:SS`, or a bare
+ * seconds count, all accepted since a referee correcting the board by hand
+ * is not going to reliably reproduce the display's own padding. Returns
+ * `null` on anything unparseable, which the caller must treat as "discard,
+ * don't guess" (CLAUDE.md §4.4) — the same rule applied to the wire, applied
+ * here to free-text input: an edit that can't be understood must cancel, not
+ * commit its best interpretation.
+ */
+export function parseClockInput(str) {
+  const trimmed = str.trim();
+  const match = /^(\d+):([0-5]?\d)$/.exec(trimmed);
+  if (match) {
+    const minutes = Number(match[1]);
+    const seconds = Number(match[2]);
+    return (minutes * 60 + seconds) * 1000;
+  }
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  return null;
+}
+
 /** `MM:SS` — fully padded, for secondary clocks and differentials. */
 export function formatPadded(ms) {
   const total = Math.floor(Math.max(0, ms) / 1000);

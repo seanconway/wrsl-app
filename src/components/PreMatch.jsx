@@ -1,8 +1,8 @@
 import React from 'react';
 import { Button } from '../../design-system/components/core/Button.jsx';
 import { Icon } from '../../design-system/components/core/Icon.jsx';
-import { RULESETS, ROLE, allPeriods } from '../match/rulesets.js';
-import { selectRuleset } from '../match/matchReducer.js';
+import { RULESETS, ROLE } from '../match/rulesets.js';
+import { selectRuleset, selectMatchPeriods } from '../match/matchReducer.js';
 import { formatClock } from '../match/clock.js';
 
 /** Screen-only swatch for the legend below — `led_colour` is now a wire
@@ -27,7 +27,7 @@ const LEGEND_SWATCH = {
  */
 export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
   const ruleset = selectRuleset(state);
-  const periods = allPeriods(ruleset);
+  const periods = selectMatchPeriods(state);
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: 'var(--sp-9) var(--sp-10)' }}>
@@ -68,27 +68,82 @@ export default function PreMatch({ state, dispatch, dongle, onConfirm }) {
         </Panel>
 
         <Panel title="Period structure">
-          <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             {periods.map((p, i) => (
-              <label key={`${p.label}-${i}`} style={{ display: 'grid', gap: 4 }}>
-                <span className="rr-eyebrow">
-                  {p.label}
-                  {p.overtime ? ' · OT' : ''}
-                </span>
+              // Keyed on index alone, not label: the label is now user-typed
+              // (RENAME_PERIOD below), and keying on it would remount this
+              // input — dropping focus — on every keystroke.
+              <label key={i} style={{ display: 'grid', gap: 4, position: 'relative' }}>
+                {p.overtime ? (
+                  <span className="rr-eyebrow">{p.label} · OT</span>
+                ) : (
+                  <input
+                    value={p.label}
+                    onChange={(e) => dispatch({ type: 'RENAME_PERIOD', index: i, label: e.target.value })}
+                    style={{ ...inputStyle, fontSize: 'var(--fs-13)', padding: '4px 6px', minHeight: 'auto' }}
+                  />
+                )}
                 <input
                   type="number"
                   min={1}
-                  value={state.periodDurations[i]}
+                  value={p.duration_s}
                   onChange={(e) =>
                     dispatch({ type: 'SET_PERIOD_DURATION', index: i, seconds: Number(e.target.value) })
                   }
                   style={inputStyle}
                 />
                 <span className="rr-num" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', color: 'var(--text-muted)' }}>
-                  {formatClock(state.periodDurations[i] * 1000)}
+                  {formatClock(p.duration_s * 1000)}
                 </span>
+                {!p.overtime && (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${p.label}`}
+                    disabled={state.periods.length <= 1}
+                    onClick={() => dispatch({ type: 'REMOVE_PERIOD', index: i })}
+                    style={{
+                      position: 'absolute',
+                      top: -10,
+                      right: -10,
+                      width: 22,
+                      height: 22,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'var(--surface-card)',
+                      border: '1px solid var(--border-strong)',
+                      borderRadius: '50%',
+                      color: 'var(--text-muted)',
+                      cursor: state.periods.length <= 1 ? 'not-allowed' : 'pointer',
+                      opacity: state.periods.length <= 1 ? 0.35 : 1,
+                    }}
+                  >
+                    <Icon name="x" size={12} />
+                  </button>
+                )}
               </label>
             ))}
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'ADD_PERIOD', afterIndex: state.periods.length - 1 })}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                minHeight: 'var(--touch-min)',
+                padding: '0 12px',
+                background: 'transparent',
+                border: '1px dashed var(--border-strong)',
+                borderRadius: 'var(--r-2)',
+                color: 'var(--text-body)',
+                fontFamily: 'var(--font-ui)',
+                fontSize: 'var(--fs-13)',
+                cursor: 'pointer',
+              }}
+            >
+              <Icon name="plus" size={16} />
+              Add period
+            </button>
           </div>
         </Panel>
 
