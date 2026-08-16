@@ -266,7 +266,16 @@ function Corner({
           style={{
             fontFamily: 'var(--font-mono)',
             fontWeight: 800,
-            fontSize: 'clamp(var(--fs-104), 18vw, var(--fs-220))',
+            // The ceiling is height-, not pixel-, bound: 32vh equals 18vw at
+            // exactly 16:9, so on 16:9-or-narrower screens the ceiling never
+            // actually binds and the digit keeps scaling with viewport width
+            // all the way up — a fixed px ceiling (the old value here) was
+            // why the same absolute number size looked smaller and smaller,
+            // surrounded by more and more empty space, as the monitor got
+            // bigger. Only wider-than-16:9 (ultrawide) screens hit the vh
+            // bound, which exists to keep the digit from outgrowing the row's
+            // actual vertical room rather than to cap it in absolute terms.
+            fontSize: 'clamp(var(--fs-104), 18vw, 32vh)',
             letterSpacing: 'var(--ls-normal)',
             lineHeight: 0.9,
             color: 'var(--text-strong)',
@@ -411,7 +420,11 @@ function ClockColumn({
         style={{
           fontFamily: 'var(--font-mono)',
           fontWeight: 700,
-          fontSize: 'clamp(var(--fs-62), 9vw, var(--fs-148))',
+          // Same reasoning as the score's fontSize above: 16vh equals 9vw at
+          // exactly 16:9, so the ceiling only binds on wider-than-16:9
+          // screens, where it exists to protect the row's vertical room —
+          // not a fixed px cap that stops the clock scaling with the screen.
+          fontSize: 'clamp(var(--fs-62), 9vw, 16vh)',
           letterSpacing: '-0.04em',
           lineHeight: 0.92,
           color: warning ? 'var(--signal-stop)' : running ? 'var(--text-strong)' : 'var(--text-muted)',
