@@ -4,7 +4,7 @@ Working knowledge for anyone — human or agent — working in this repo. It hol
 
 **The specifications live in the sibling `refremote_nordic` repo** — `SCOPE.md` (what the system is), `SYSTEM_FUNC_SPEC.md` (how it behaves, cited as "FS §n"), `PLAN.md` (the living status document — completed work, planned work, binding decisions, the validation ladder, version history), and a fuller `CLAUDE.md` covering both repos and the firmware. Those two specifications are authoritative on direction and behaviour. A change that contradicts them is a conversation, not an implementation detail.
 
-`PROTOCOL.md` is here too, and **must stay byte-identical to the copy in `refremote_nordic`.** Copy it explicitly and compare hashes — the two were once joined by a hard link, which broke silently when an editor wrote a new file instead of modifying in place, leaving the repos on different versions with no indication.
+`PROTOCOL.md` lives only in `refremote_nordic` now — there is no local copy in this repo. It used to be duplicated here, kept in sync by a hard link; that link broke silently when an editor wrote a new file instead of modifying in place, leaving the two repos on different versions with no indication. Removing the second copy (2026-08-17) removes the failure mode instead of relying on discipline to avoid it — there is nothing left here that can drift. Code in this repo cites it as `PROTOCOL.md §n` in comments exactly as it already cites `SCOPE.md`/`SYSTEM_FUNC_SPEC.md`, both of which have only ever lived in the sibling repo.
 
 ---
 

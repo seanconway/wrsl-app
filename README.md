@@ -8,7 +8,7 @@ Firmware for the remotes and the USB dongle lives in [`refremote_nordic`](https:
 
 Two documents in the firmware repo define the project and are the authority on direction — `SCOPE.md` and `SYSTEM_FUNC_SPEC.md`. Where any other document disagrees with them, they win. The requirements this application answers to are *Functional Specification* §8 (application requirements), §12 (ruleset configuration) and §2.2 (what the scoreboard owns).
 
-[`PROTOCOL.md`](./PROTOCOL.md) in this repo is the dongle ↔ scoreboard wire protocol, kept **byte-identical** with the copy in the firmware repo.
+[`PROTOCOL.md`](https://github.com/seanconway/refremote_nordic/blob/main/PROTOCOL.md) — the dongle ↔ scoreboard wire protocol — lives only in the firmware repo. It used to be duplicated here and kept in sync by hand (fragile: see `CLAUDE.md`); refer to the firmware repo's copy rather than expecting one locally.
 
 ## What this application is responsible for
 
